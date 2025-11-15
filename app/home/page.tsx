@@ -10,6 +10,7 @@ import { TrendingUp, Users, Trophy, Calendar, CheckCircle2, X, ChevronRight } fr
 import { getTournaments } from "@/lib/tournaments";
 import { Tournament } from "@/lib/types";
 import { useAuth } from "../contexts/AuthContext";
+import { getUserById } from "@/lib/users";
 
 function SuccessMessage() {
   const searchParams = useSearchParams();
@@ -56,6 +57,8 @@ export default function HomePage() {
   const { user } = useAuth();
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [isLoadingTournaments, setIsLoadingTournaments] = useState(true);
+  const [userLevel, setUserLevel] = useState<number | null>(null);
+  const [isLoadingLevel, setIsLoadingLevel] = useState(true);
 
   const loadTournaments = async () => {
     if (!user) return;
@@ -74,8 +77,25 @@ export default function HomePage() {
   useEffect(() => {
     if (user) {
       loadTournaments();
+      loadUserLevel();
     }
   }, [user]);
+
+  const loadUserLevel = async () => {
+    if (!user) return;
+    
+    try {
+      setIsLoadingLevel(true);
+      const userData = await getUserById(user.uid);
+      if (userData?.level !== undefined) {
+        setUserLevel(userData.level);
+      }
+    } catch (error) {
+      console.error("Error loading user level:", error);
+    } finally {
+      setIsLoadingLevel(false);
+    }
+  };
 
   // Recharger les tournois quand on revient sur la page (après création)
   useEffect(() => {
@@ -102,28 +122,28 @@ export default function HomePage() {
   const stats = [
     {
       label: "Tournois joués",
-      value: "24",
+      value: "0",
       icon: Trophy,
       color: "text-primary",
       bgColor: "bg-primary/10",
     },
     {
       label: "Victoires",
-      value: "12",
+      value: "0",
       icon: TrendingUp,
       color: "text-green-500",
       bgColor: "bg-green-500/10",
     },
     {
       label: "Partenaires",
-      value: "18",
+      value: "0",
       icon: Users,
       color: "text-blue-500",
       bgColor: "bg-blue-500/10",
     },
     {
       label: "Cette semaine",
-      value: "3",
+      value: "0",
       icon: Calendar,
       color: "text-orange-500",
       bgColor: "bg-orange-500/10",
@@ -193,41 +213,57 @@ export default function HomePage() {
           </div>
         </Link>
 
-        {/* Liste des tournois créés */}
+        {/* Liste des tournois créés et rejoints */}
         {tournaments.length > 0 && (
           <div className="mb-8">
             <h3 className="mb-4 text-lg font-semibold text-foreground">
               Vos tournois
             </h3>
             <div className="space-y-3">
-              {tournaments.map((tournament) => (
-                <Link
-                  key={tournament.id}
-                  href={`/tournoi/${tournament.id}`}
-                  className="block"
-                >
-                  <div className="flex items-center justify-between rounded-xl bg-card p-4 shadow-sm transition-all hover:shadow-md active:scale-[0.98]">
-                    <div className="flex-1">
-                      <div className="font-medium text-foreground">
-                        {tournament.name}
+              {tournaments.map((tournament) => {
+                // Déterminer si l'utilisateur est le propriétaire
+                const isOwner = user && tournament.userId === user.uid;
+                // Déterminer la route selon le rôle
+                const tournamentRoute = isOwner 
+                  ? `/tournoi/${tournament.id}` 
+                  : `/join/${tournament.id}`;
+                
+                return (
+                  <Link
+                    key={tournament.id}
+                    href={tournamentRoute}
+                    className="block"
+                  >
+                    <div className="flex items-center justify-between rounded-xl bg-card p-4 shadow-sm transition-all hover:shadow-md active:scale-[0.98]">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-foreground">
+                            {tournament.name}
+                          </span>
+                          {!isOwner && (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+                              Participant
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
+                          <span>{formatDate(tournament.createdAt)}</span>
+                          {tournament.location && (
+                            <>
+                              <span>•</span>
+                              <span>{tournament.location}</span>
+                            </>
+                          )}
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {tournament.players.length}/{tournament.maxPlayers || tournament.players.length} joueurs • {tournament.courts.length} terrain{tournament.courts.length > 1 ? "s" : ""}
+                        </div>
                       </div>
-                      <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
-                        <span>{formatDate(tournament.createdAt)}</span>
-                        {tournament.location && (
-                          <>
-                            <span>•</span>
-                            <span>{tournament.location}</span>
-                          </>
-                        )}
-                      </div>
-                              <div className="mt-1 text-xs text-muted-foreground">
-                                {tournament.players.length}/{tournament.maxPlayers || tournament.players.length} joueurs • {tournament.courts.length} terrain{tournament.courts.length > 1 ? "s" : ""}
-                              </div>
+                      <ChevronRight className="h-5 w-5 text-muted-foreground" />
                     </div>
-                    <ChevronRight className="h-5 w-5 text-muted-foreground" />
-                  </div>
-                </Link>
-              ))}
+                  </Link>
+                );
+              })}
             </div>
           </div>
         )}
@@ -235,10 +271,42 @@ export default function HomePage() {
         {!isLoadingTournaments && tournaments.length === 0 && (
           <div className="mb-8 rounded-xl bg-muted/30 p-6 text-center">
             <p className="text-sm text-muted-foreground">
-              Aucun tournoi créé pour le moment. Créez votre premier tournoi !
+              Aucun tournoi pour le moment. Créez votre premier tournoi ou rejoignez-en un !
             </p>
           </div>
         )}
+
+        {/* Level Section */}
+        <div className="mb-8">
+          <h3 className="mb-4 text-lg font-semibold text-foreground">
+            Votre niveau
+          </h3>
+          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-card via-card to-card/80 p-6 shadow-lg border border-border/50">
+            {/* Subtle pattern overlay */}
+            <div className="absolute inset-0 opacity-[0.03] bg-[radial-gradient(circle_at_1px_1px,_white_1px,_transparent_0)] bg-[length:20px_20px]" />
+            
+            <div className="relative flex items-center justify-between">
+              <div className="flex-1">
+                <div className="mb-2">
+                  <span className="text-5xl font-bold text-primary">
+                    {isLoadingLevel ? "..." : (userLevel !== null ? userLevel.toFixed(2) : "0.00")}
+                  </span>
+                  <span className="ml-2 text-2xl font-semibold text-muted-foreground">Level</span>
+                </div>
+                <div className="flex items-center gap-3 mt-3">
+                  <span className="text-sm text-muted-foreground">Level reliability:</span>
+                  <span className="text-lg font-semibold text-foreground">0%</span>
+                  <span className="px-3 py-1 rounded-full text-xs font-medium bg-muted/50 text-muted-foreground border border-border">
+                    Faible
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 border-2 border-primary/20">
+                <Trophy className="h-8 w-8 text-primary" />
+              </div>
+            </div>
+          </div>
+        </div>
 
         {/* Stats */}
         <div className="mb-8">

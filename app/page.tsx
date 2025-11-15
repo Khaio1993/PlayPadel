@@ -13,7 +13,25 @@ export default function Home() {
 
   useEffect(() => {
     if (!loading && user) {
-      // Vérifier s'il y a une redirection sauvegardée
+      // Vérifier l'onboarding d'abord
+      checkOnboardingAndRedirect();
+    }
+  }, [user, loading, router]);
+
+  const checkOnboardingAndRedirect = async () => {
+    if (!user) return;
+
+    try {
+      const { getUserById } = await import("@/lib/users");
+      const userData = await getUserById(user.uid);
+      
+      if (!userData || !userData.onboardingCompleted) {
+        // Rediriger vers l'onboarding
+        router.push("/onboarding");
+        return;
+      }
+
+      // Si l'onboarding est complété, rediriger normalement
       const redirectPath = sessionStorage.getItem("redirectAfterLogin");
       if (redirectPath) {
         sessionStorage.removeItem("redirectAfterLogin");
@@ -21,8 +39,12 @@ export default function Home() {
       } else {
         router.push("/home");
       }
+    } catch (error) {
+      console.error("Error checking onboarding:", error);
+      // En cas d'erreur, rediriger vers l'onboarding pour être sûr
+      router.push("/onboarding");
     }
-  }, [user, loading, router]);
+  };
 
   const handleSignIn = async () => {
     try {

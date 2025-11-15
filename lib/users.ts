@@ -20,10 +20,20 @@ export interface UserProfile {
   displayName: string;
   photoURL?: string;
   createdAt: Date;
+  // Onboarding fields
+  firstName?: string;
+  lastName?: string;
+  dateOfBirth?: string; // ISO date string
+  phoneNumber?: string;
+  gender?: "M" | "F";
+  level?: number;
+  preferredSide?: "left" | "right";
+  onboardingCompleted?: boolean;
 }
 
 /**
  * Créer ou mettre à jour le profil d'un utilisateur
+ * Ne met à jour photoURL que si le profil n'existe pas encore (premier sign-up)
  */
 export const createOrUpdateUserProfile = async (
   userId: string,
@@ -31,18 +41,32 @@ export const createOrUpdateUserProfile = async (
     email: string;
     displayName: string;
     photoURL?: string;
+  },
+  options?: {
+    updatePhotoURL?: boolean; // Si true, force la mise à jour du photoURL même si existe
   }
 ): Promise<void> => {
   try {
     const userRef = doc(db, USERS_COLLECTION, userId);
-    await setDoc(
-      userRef,
-      {
-        ...userData,
-        updatedAt: Timestamp.now(),
-      },
-      { merge: true }
-    );
+    const userSnap = await getDoc(userRef);
+    
+    const dataToUpdate: Record<string, any> = {
+      email: userData.email,
+      displayName: userData.displayName,
+      updatedAt: Timestamp.now(),
+    };
+    
+    // Ne mettre à jour photoURL que si :
+    // 1. Le profil n'existe pas encore (premier sign-up)
+    // 2. Ou si updatePhotoURL est explicitement true
+    if (!userSnap.exists() || options?.updatePhotoURL) {
+      if (userData.photoURL) {
+        dataToUpdate.photoURL = userData.photoURL;
+      }
+    }
+    // Si le profil existe déjà et qu'on a un photoURL uploadé, on ne l'écrase pas
+    
+    await setDoc(userRef, dataToUpdate, { merge: true });
   } catch (error) {
     console.error("Error creating/updating user profile:", error);
     throw error;
@@ -111,10 +135,18 @@ export const getUserById = async (userId: string): Promise<UserProfile | null> =
       const data = userSnap.data();
       return {
         id: userSnap.id,
-        email: data.email,
-        displayName: data.displayName,
+        email: data.email || "",
+        displayName: data.displayName || "",
         photoURL: data.photoURL,
         createdAt: data.createdAt?.toDate() || new Date(),
+        firstName: data.firstName,
+        lastName: data.lastName,
+        dateOfBirth: data.dateOfBirth,
+        phoneNumber: data.phoneNumber,
+        gender: data.gender,
+        level: data.level,
+        preferredSide: data.preferredSide,
+        onboardingCompleted: data.onboardingCompleted || false,
       };
     }
 
@@ -122,6 +154,29 @@ export const getUserById = async (userId: string): Promise<UserProfile | null> =
   } catch (error) {
     console.error("Error getting user by ID:", error);
     return null;
+  }
+};
+
+/**
+ * Mettre à jour le profil utilisateur avec les données d'onboarding
+ */
+export const updateUserProfile = async (
+  userId: string,
+  data: Partial<UserProfile>
+): Promise<void> => {
+  try {
+    const userRef = doc(db, USERS_COLLECTION, userId);
+    await setDoc(
+      userRef,
+      {
+        ...data,
+        updatedAt: Timestamp.now(),
+      },
+      { merge: true }
+    );
+  } catch (error) {
+    console.error("Error updating user profile:", error);
+    throw error;
   }
 };
 

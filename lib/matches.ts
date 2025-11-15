@@ -83,6 +83,30 @@ export const updateMatch = async (
 };
 
 /**
+ * Supprimer tous les matchs d'un tournoi
+ */
+export const deleteMatchesByTournament = async (tournamentId: string): Promise<void> => {
+  try {
+    const q = query(
+      collection(db, MATCHES_COLLECTION),
+      where("tournamentId", "==", tournamentId)
+    );
+    const querySnapshot = await getDocs(q);
+    
+    const batch = writeBatch(db);
+    querySnapshot.docs.forEach((doc) => {
+      batch.delete(doc.ref);
+    });
+    
+    await batch.commit();
+    console.log(`Deleted ${querySnapshot.docs.length} matches for tournament ${tournamentId}`);
+  } catch (error) {
+    console.error("Error deleting matches:", error);
+    throw error;
+  }
+};
+
+/**
  * Récupérer un match par ID
  */
 export const getMatchById = async (id: string): Promise<Match | null> => {

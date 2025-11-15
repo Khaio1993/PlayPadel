@@ -5,11 +5,12 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuth } from "../../contexts/AuthContext";
 import { getTournamentById, updateTournament } from "@/lib/tournaments";
-import { Tournament, Player } from "@/lib/types";
+import { getMatchesByTournament } from "@/lib/matches";
+import { Tournament, Player, Match } from "@/lib/types";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { createOrUpdateUserProfile } from "@/lib/users";
-import { Loader2, MapPin, Clock, Users, FileText, Trophy } from "lucide-react";
+import { Loader2, MapPin, Clock, Users, FileText, Trophy, Image as ImageIcon, Award } from "lucide-react";
 
 export default function JoinTournamentPage() {
   const params = useParams();
@@ -18,10 +19,12 @@ export default function JoinTournamentPage() {
   const { user, loading: authLoading } = useAuth();
 
   const [tournament, setTournament] = useState<Tournament | null>(null);
+  const [matches, setMatches] = useState<Match[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isJoining, setIsJoining] = useState(false);
   const [selectedPlace, setSelectedPlace] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"joueurs" | "matchs" | "results" | "media">("joueurs");
 
   // Écouter les changements en temps réel du tournoi
   useEffect(() => {
@@ -38,6 +41,15 @@ export default function JoinTournamentPage() {
             ...data,
             createdAt: data.createdAt?.toDate() || new Date(),
           } as Tournament);
+          
+          // Charger les matchs
+          try {
+            const matchesData = await getMatchesByTournament(tournamentId);
+            setMatches(matchesData);
+          } catch (error) {
+            console.error("Error loading matches:", error);
+          }
+          
           setIsLoading(false);
         } else {
           setError("Tournoi introuvable");
@@ -65,6 +77,14 @@ export default function JoinTournamentPage() {
 
   // Vérifier si l'utilisateur est déjà dans le tournoi
   const isUserAlreadyInTournament = user && tournament?.players.some(
+    (p) => p.userId === user.uid
+  );
+
+  // Vérifier si l'utilisateur est le propriétaire du tournoi
+  const isOwner = user && tournament?.userId === user.uid;
+
+  // Obtenir le joueur de l'utilisateur actuel
+  const currentUserPlayer = user && tournament?.players.find(
     (p) => p.userId === user.uid
   );
 
@@ -110,9 +130,9 @@ export default function JoinTournamentPage() {
         return;
       }
 
-      // Vérifier si l'utilisateur est déjà dans le tournoi
+      // Vérifier si l'utilisateur est déjà dans le tournoi (double vérification)
       if (currentTournament.players.some((p) => p.userId === user.uid)) {
-        setError("Vous êtes déjà inscrit à ce tournoi");
+        setError("Vous êtes déjà inscrit à ce tournoi. Vous ne pouvez pas prendre une autre place.");
         setIsJoining(false);
         return;
       }
@@ -128,14 +148,41 @@ export default function JoinTournamentPage() {
       const placeGender: "M" | "F" = placeIndex % 2 === 0 ? "M" : "F";
 
       // Ajouter le joueur à la place
-      const updatedPlayers = [...currentTournament.players];
-      updatedPlayers[placeIndex] = {
+      const updatedPlayers: Player[] = currentTournament.players.map((p) => {
+        // Nettoyer les joueurs existants pour enlever les valeurs undefined
+        const cleanPlayer: Player = {
+          id: p.id,
+          name: p.name,
+          gender: p.gender,
+        };
+        if (p.userId) cleanPlayer.userId = p.userId;
+        if (p.photoURL) cleanPlayer.photoURL = p.photoURL;
+        return cleanPlayer;
+      });
+      
+      // S'assurer que le tableau a la bonne taille
+      while (updatedPlayers.length <= placeIndex) {
+        updatedPlayers.push({
+          id: "",
+          name: "",
+          gender: updatedPlayers.length % 2 === 0 ? "M" : "F",
+        });
+      }
+      
+      // Créer le nouveau joueur
+      const newPlayer: Player = {
         id: Date.now().toString(),
         name: user.displayName || "User",
         gender: placeGender,
         userId: user.uid,
-        photoURL: user.photoURL || undefined,
       };
+      
+      // Ajouter photoURL seulement si elle existe
+      if (user.photoURL) {
+        newPlayer.photoURL = user.photoURL;
+      }
+      
+      updatedPlayers[placeIndex] = newPlayer;
 
       // Mettre à jour le tournoi
       await updateTournament(tournamentId, {
@@ -269,16 +316,18 @@ export default function JoinTournamentPage() {
             <p className="text-sm font-medium text-foreground">
               ✓ Vous êtes déjà inscrit à ce tournoi
             </p>
-            <button
-              onClick={() => router.push(`/tournoi/${tournamentId}`)}
-              className="mt-3 text-sm font-medium text-primary hover:underline"
-            >
-              Voir le tournoi →
-            </button>
+            {isOwner && (
+              <button
+                onClick={() => router.push(`/tournoi/${tournamentId}`)}
+                className="mt-3 text-sm font-medium text-primary hover:underline"
+              >
+                Voir le tournoi →
+              </button>
+            )}
           </div>
         )}
 
-        {/* Places disponibles */}
+        {/* Places disponibles - seulement si pas déjà inscrit */}
         {!isUserAlreadyInTournament && (
           <div className="mb-8">
             <h2 className="text-xl font-semibold text-foreground mb-4">
@@ -361,6 +410,220 @@ export default function JoinTournamentPage() {
                 </button>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Tabs - seulement si l'utilisateur est inscrit */}
+        {isUserAlreadyInTournament && (
+          <div className="mb-8">
+            {/* Navigation des tabs */}
+            <div className="mb-6 flex gap-2 overflow-x-auto pb-2">
+              {[
+                { id: "joueurs" as const, label: "Joueurs", icon: Users },
+                { id: "matchs" as const, label: "Matchs", icon: Trophy },
+                { id: "results" as const, label: "Results", icon: Award },
+                { id: "media" as const, label: "Media", icon: ImageIcon },
+              ].map((tab) => {
+                const Icon = tab.icon;
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`flex items-center gap-2 whitespace-nowrap rounded-xl px-4 py-2 text-sm font-medium transition-all ${
+                      isActive
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted/50 text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    <Icon className="h-4 w-4" />
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Contenu des tabs */}
+            <div className="min-h-[200px]">
+              {/* Tab Joueurs */}
+              {activeTab === "joueurs" && (
+                <div>
+                  <h2 className="text-xl font-semibold text-foreground mb-4">
+                    Joueurs inscrits ({tournament.players.length}/{totalPlaces})
+                  </h2>
+                  <div className="space-y-2">
+                    {tournament.players.map((player, index) => {
+                      const isCurrentUser = user && player.userId === user.uid;
+                      // Créer une clé unique en combinant l'index et l'ID du joueur
+                      const uniqueKey = player.userId 
+                        ? `player-${player.userId}-${index}` 
+                        : `player-${player.id || `temp-${index}`}-${index}`;
+                      return (
+                        <div
+                          key={uniqueKey}
+                          className={`flex items-center gap-3 rounded-xl p-3 ${
+                            isCurrentUser
+                              ? "bg-primary/10 border border-primary/20"
+                              : "bg-card"
+                          }`}
+                        >
+                          {player.photoURL ? (
+                            <Image
+                              src={player.photoURL}
+                              alt={player.name}
+                              width={32}
+                              height={32}
+                              className="h-8 w-8 rounded-full"
+                            />
+                          ) : (
+                            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
+                              <Users className="h-4 w-4 text-primary" />
+                            </div>
+                          )}
+                          <div className="flex-1">
+                            <p className="text-sm font-medium text-foreground">
+                              {player.name}
+                              {isCurrentUser && (
+                                <span className="ml-2 text-xs text-primary">(Vous)</span>
+                              )}
+                            </p>
+                          </div>
+                          <div
+                            className={`h-6 w-6 rounded-full ${
+                              player.gender === "M" ? "bg-primary" : "bg-[#e05d38]"
+                            }`}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Tab Matchs */}
+              {activeTab === "matchs" && (
+                <div>
+                  {matches.length === 0 ? (
+                    <div className="rounded-xl bg-muted/50 border border-border p-6 text-center">
+                      <Trophy className="h-12 w-12 text-muted-foreground mx-auto mb-4 opacity-50" />
+                      <p className="text-sm text-muted-foreground">
+                        Le tirage des matchs n&apos;est pas encore réalisé.
+                      </p>
+                      <p className="text-sm text-muted-foreground mt-2">
+                        Revenez plus tard pour voir les matchs.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {Array.from(
+                        { length: Math.max(...matches.map((m) => m.round)) },
+                        (_, i) => i + 1
+                      ).map((round) => {
+                        const roundMatches = matches.filter((m) => m.round === round);
+                        if (roundMatches.length === 0) return null;
+
+                        return (
+                          <div key={round} className="rounded-xl bg-card p-4 shadow-sm">
+                            <h4 className="mb-4 text-base font-semibold text-foreground">
+                              Round {round}
+                            </h4>
+                            <div className="space-y-3">
+                              {roundMatches.map((match) => {
+                                const getPlayerName = (playerId: string): string => {
+                                  return (
+                                    tournament?.players.find((p) => p.id === playerId)
+                                      ?.name || "Inconnu"
+                                  );
+                                };
+
+                                const getCourtName = (courtId: string): string => {
+                                  return (
+                                    tournament?.courts.find((c) => c.id === courtId)
+                                      ?.name || "Court inconnu"
+                                  );
+                                };
+
+                                const currentScore = match.score || {
+                                  team1: 0,
+                                  team2: 0,
+                                };
+
+                                return (
+                                  <div
+                                    key={match.id}
+                                    className="rounded-lg border border-border bg-background p-4"
+                                  >
+                                    <div className="mb-4 text-xs font-medium text-muted-foreground">
+                                      {getCourtName(match.courtId)}
+                                    </div>
+
+                                    {/* Équipe 1 */}
+                                    <div className="mb-3 flex items-center justify-between">
+                                      <div className="flex-1">
+                                        <p className="text-sm font-medium text-foreground">
+                                          {getPlayerName(match.team1[0])} &{" "}
+                                          {getPlayerName(match.team1[1])}
+                                        </p>
+                                      </div>
+                                      <div className="w-14 text-right text-3xl font-bold text-foreground">
+                                        {currentScore.team1}
+                                      </div>
+                                    </div>
+
+                                    <div className="my-2 text-center text-xs text-muted-foreground">
+                                      VS
+                                    </div>
+
+                                    {/* Équipe 2 */}
+                                    <div className="mb-3 flex items-center justify-between">
+                                      <div className="flex-1">
+                                        <p className="text-sm font-medium text-foreground">
+                                          {getPlayerName(match.team2[0])} &{" "}
+                                          {getPlayerName(match.team2[1])}
+                                        </p>
+                                      </div>
+                                      <div className="w-14 text-right text-3xl font-bold text-foreground">
+                                        {currentScore.team2}
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tab Results */}
+              {activeTab === "results" && (
+                <div className="rounded-xl bg-muted/50 border border-border p-6 text-center">
+                  <Award className="h-12 w-12 text-muted-foreground mx-auto mb-4 opacity-50" />
+                  <p className="text-sm text-muted-foreground">
+                    Les résultats ne sont pas encore disponibles.
+                  </p>
+                  <p className="text-sm text-muted-foreground mt-2">
+                    Revenez plus tard pour voir les résultats.
+                  </p>
+                </div>
+              )}
+
+              {/* Tab Media */}
+              {activeTab === "media" && (
+                <div className="rounded-xl bg-muted/50 border border-border p-6 text-center">
+                  <ImageIcon className="h-12 w-12 text-muted-foreground mx-auto mb-4 opacity-50" />
+                  <p className="text-sm text-muted-foreground">
+                    Aucun média n&apos;a été ajouté pour ce tournoi.
+                  </p>
+                  <p className="text-sm text-muted-foreground mt-2">
+                    Revenez plus tard pour voir les médias.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </main>

@@ -28,6 +28,7 @@ export interface Tournament {
   status: "draft" | "active" | "completed";
   userId: string; // ID de l'utilisateur qui a créé le tournoi
   maxPlayers?: number; // Nombre maximum de joueurs prévus pour le tournoi
+  isPublic?: boolean; // Si le tournoi est public ou privé
 }
 
 export interface Match {
@@ -43,5 +44,7 @@ export interface Match {
   };
   status: "pending" | "playing" | "completed";
 }
+
+export type PreferredSide = "left" | "right";
 
 

@@ -4,23 +4,48 @@ import Image from "next/image";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useCallback } from "react";
-import { ArrowLeft, Trophy, MapPin, Clock, Users, FileText, Share2, Copy, Check } from "lucide-react";
+import { 
+  ArrowLeft, 
+  Trophy, 
+  Users, 
+  Share2, 
+  Copy, 
+  Check,
+  Settings,
+  Image as ImageIcon,
+  X,
+  Plus,
+  Loader2,
+  Globe,
+  Lock
+} from "lucide-react";
 import { ProtectedRoute } from "../../components/ProtectedRoute";
 import { getTournamentById, updateTournament } from "@/lib/tournaments";
-import { getMatchesByTournament, createMatches, updateMatch } from "@/lib/matches";
+import { getMatchesByTournament, createMatches, updateMatch, deleteMatchesByTournament } from "@/lib/matches";
 import { generateMatches } from "@/lib/matchGenerator";
-import { Tournament, Match } from "@/lib/types";
+import { Tournament, Match, Player } from "@/lib/types";
+import { useAuth } from "../../contexts/AuthContext";
+import { PlayerSelector } from "../../components/PlayerSelector";
 
 export default function TournamentDetailPage() {
   const params = useParams();
   const router = useRouter();
   const tournamentId = params.id as string;
+  const { user } = useAuth();
 
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [matches, setMatches] = useState<Match[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [activeTab, setActiveTab] = useState<"settings" | "joueurs" | "matchs" | "media">("settings");
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [tempTitle, setTempTitle] = useState("");
+  const [editingLocation, setEditingLocation] = useState(false);
+  const [editingTime, setEditingTime] = useState(false);
+  const [tempLocation, setTempLocation] = useState("");
+  const [tempTime, setTempTime] = useState("");
   const saveTimeouts = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
   useEffect(() => {
@@ -39,6 +64,9 @@ export default function TournamentDetailPage() {
       if (tournamentData) {
         setTournament(tournamentData);
         setMatches(matchesData);
+        setTempTitle(tournamentData.name || "");
+        setTempLocation(tournamentData.location || "");
+        setTempTime(tournamentData.time || "");
       } else {
         router.push("/home");
       }
@@ -79,15 +107,46 @@ export default function TournamentDetailPage() {
     }
   };
 
+  const handleRegenerateMatches = async () => {
+    if (!tournament) return;
+    
+    if (!confirm("Êtes-vous sûr de vouloir régénérer les matchs ? Tous les scores actuels seront perdus.")) {
+      return;
+    }
+
+    try {
+      setIsGenerating(true);
+      
+      // Supprimer les anciens matchs
+      await deleteMatchesByTournament(tournamentId);
+      
+      // Générer les nouveaux matchs
+      const generatedMatches = generateMatches(tournament.players, tournament.courts);
+      const matchesWithTournamentId = generatedMatches.map((match) => ({
+        ...match,
+        tournamentId: tournamentId,
+      }));
+
+      await createMatches(matchesWithTournamentId);
+      
+      // Recharger les matchs
+      const updatedMatches = await getMatchesByTournament(tournamentId);
+      setMatches(updatedMatches);
+    } catch (error) {
+      console.error("Error regenerating matches:", error);
+      alert("Erreur lors de la régénération des matchs");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   // Sauvegarder automatiquement avec debounce
   const saveScore = useCallback(async (matchId: string, score: { team1: number; team2: number }) => {
-    // Annuler le timeout précédent s'il existe
     const existingTimeout = saveTimeouts.current.get(matchId);
     if (existingTimeout) {
       clearTimeout(existingTimeout);
     }
 
-    // Mettre à jour localement immédiatement pour un feedback visuel
     setMatches((prevMatches) =>
       prevMatches.map((m) =>
         m.id === matchId
@@ -96,7 +155,6 @@ export default function TournamentDetailPage() {
       )
     );
 
-    // Sauvegarder dans Firebase après 1 seconde d'inactivité
     const timeout = setTimeout(async () => {
       try {
         await updateMatch(matchId, {
@@ -112,10 +170,10 @@ export default function TournamentDetailPage() {
     saveTimeouts.current.set(matchId, timeout);
   }, []);
 
-  // Nettoyer les timeouts au démontage
   useEffect(() => {
+    const currentSaveTimeouts = saveTimeouts.current;
     return () => {
-      saveTimeouts.current.forEach((timeout) => clearTimeout(timeout));
+      currentSaveTimeouts.forEach((timeout) => clearTimeout(timeout));
     };
   }, []);
 
@@ -133,12 +191,10 @@ export default function TournamentDetailPage() {
 
   const rounds = matches.length > 0 ? Math.max(...matches.map((m) => m.round)) : 0;
 
-  // Vérifier si on peut générer les matchs (minimum 4 joueurs avec équilibre H/F)
   const canGenerateMatches = tournament && tournament.players && tournament.players.length >= 4 && 
     tournament.players.filter((p) => p.gender === "M").length === 
     tournament.players.filter((p) => p.gender === "F").length;
 
-  // URL publique du tournoi
   const publicTournamentUrl = typeof window !== "undefined" 
     ? `${window.location.origin}/join/${tournamentId}`
     : "";
@@ -152,7 +208,6 @@ export default function TournamentDetailPage() {
           url: publicTournamentUrl,
         });
       } catch {
-        // L'utilisateur a annulé le partage
         console.log("Share cancelled");
       }
     }
@@ -165,6 +220,144 @@ export default function TournamentDetailPage() {
       setTimeout(() => setCopied(false), 2000);
     } catch (error) {
       console.error("Error copying link:", error);
+    }
+  };
+
+  const handleSaveLocation = async () => {
+    if (!tournament) return;
+    setIsSaving(true);
+    try {
+      await updateTournament(tournamentId, { location: tempLocation });
+      setTournament({ ...tournament, location: tempLocation });
+      setEditingLocation(false);
+    } catch (error) {
+      console.error("Error saving location:", error);
+      alert("Erreur lors de la sauvegarde du lieu");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveTime = async () => {
+    if (!tournament) return;
+    setIsSaving(true);
+    try {
+      await updateTournament(tournamentId, { time: tempTime });
+      setTournament({ ...tournament, time: tempTime });
+      setEditingTime(false);
+    } catch (error) {
+      console.error("Error saving time:", error);
+      alert("Erreur lors de la sauvegarde de la date");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveTitle = async () => {
+    if (!tournament) return;
+    const trimmedTitle = tempTitle.trim();
+    if (!trimmedTitle) {
+      setTempTitle(tournament.name);
+      setEditingTitle(false);
+      return;
+    }
+    
+    setIsSaving(true);
+    try {
+      await updateTournament(tournamentId, { name: trimmedTitle });
+      setTournament({ ...tournament, name: trimmedTitle });
+      setEditingTitle(false);
+    } catch (error) {
+      console.error("Error saving title:", error);
+      alert("Erreur lors de la sauvegarde du nom");
+      setTempTitle(tournament.name);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleTogglePublic = async () => {
+    if (!tournament) return;
+    setIsSaving(true);
+    try {
+      const newIsPublic = !tournament.isPublic;
+      await updateTournament(tournamentId, { isPublic: newIsPublic });
+      setTournament({ ...tournament, isPublic: newIsPublic });
+    } catch (error) {
+      console.error("Error toggling public:", error);
+      alert("Erreur lors de la mise à jour");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleAddPlayer = () => {
+    if (!tournament) return;
+    const newPlayer: Player = {
+      id: Date.now().toString(),
+      name: "",
+      gender: tournament.players.length % 2 === 0 ? "M" : "F",
+    };
+    setTournament({
+      ...tournament,
+      players: [...tournament.players, newPlayer],
+    });
+  };
+
+  const handleRemovePlayer = async (playerId: string) => {
+    if (!tournament) return;
+    if (tournament.players.length <= 4) {
+      alert("Minimum 4 joueurs requis");
+      return;
+    }
+    
+    if (!confirm("Êtes-vous sûr de vouloir supprimer ce joueur ?")) {
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      const updatedPlayers = tournament.players.filter((p) => p.id !== playerId);
+      await updateTournament(tournamentId, { players: updatedPlayers });
+      setTournament({ ...tournament, players: updatedPlayers });
+      
+      // Si des matchs existent, les supprimer car la configuration a changé
+      if (matches.length > 0) {
+        await deleteMatchesByTournament(tournamentId);
+        setMatches([]);
+        await updateTournament(tournamentId, { status: "draft" });
+        setTournament({ ...tournament, status: "draft" });
+      }
+    } catch (error) {
+      console.error("Error removing player:", error);
+      alert("Erreur lors de la suppression du joueur");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleUpdatePlayer = (playerId: string, playerData: { name: string; userId?: string; photoURL?: string; gender?: "M" | "F" }) => {
+    if (!tournament) return;
+    setTournament({
+      ...tournament,
+      players: tournament.players.map((p) =>
+        p.id === playerId
+          ? { ...p, ...playerData }
+          : p
+      ),
+    });
+  };
+
+  const handleSavePlayers = async () => {
+    if (!tournament) return;
+    setIsSaving(true);
+    try {
+      await updateTournament(tournamentId, { players: tournament.players });
+    } catch (error) {
+      console.error("Error saving players:", error);
+      alert("Erreur lors de la sauvegarde des joueurs");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -183,256 +376,574 @@ export default function TournamentDetailPage() {
     return null;
   }
 
+  // Vérifier que l'utilisateur est le propriétaire
+  if (user?.uid !== tournament.userId) {
+    router.push(`/join/${tournamentId}`);
+    return null;
+  }
+
   return (
     <ProtectedRoute>
       <div className="min-h-screen bg-background pb-8">
-      {/* Header avec logo */}
-      <header className="border-b border-border/50 bg-card/50 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-lg items-center justify-center px-6 py-6">
-          <Image
-            src="/logoPPLight.svg"
-            alt="PlayPadel Logo"
-            width={600}
-            height={200}
-            priority
-            className="h-auto w-40 dark:hidden"
-          />
-          <Image
-            src="/logoPPDark.svg"
-            alt="PlayPadel Logo"
-            width={600}
-            height={200}
-            priority
-            className="hidden h-auto w-40 dark:block"
-          />
-        </div>
-      </header>
-
-      {/* Titre de la page avec bouton retour */}
-      <div className="mx-auto max-w-lg px-6 pt-8 pb-4">
-        <Link href="/home">
-          <button className="mb-4 flex items-center gap-2 text-muted-foreground transition-colors hover:text-foreground">
-            <ArrowLeft className="h-5 w-5" />
-            <span className="text-sm font-medium">Retour</span>
-          </button>
-        </Link>
-        <h1 className="text-3xl font-bold text-foreground">{tournament.name}</h1>
-        <p className="mt-2 text-muted-foreground">Détails et matchs du tournoi</p>
-      </div>
-
-      {/* Contenu principal */}
-      <main className="mx-auto max-w-lg px-6 py-4">
-        {/* Informations du tournoi */}
-        <div className="mb-8 space-y-4 rounded-2xl bg-card p-6 shadow-sm">
-          <div className="flex items-start gap-3">
-            <MapPin className="h-5 w-5 text-muted-foreground mt-0.5" />
-            <div>
-              <p className="text-sm font-semibold text-foreground">Lieu</p>
-              <p className="text-sm text-muted-foreground">
-                {tournament.location || "Non spécifié"}
-              </p>
-            </div>
+        {/* Header avec logo */}
+        <header className="border-b border-border/50 bg-card/50 backdrop-blur-sm">
+          <div className="mx-auto flex max-w-lg items-center justify-center px-6 py-6">
+            <Image
+              src="/logoPPLight.svg"
+              alt="PlayPadel Logo"
+              width={600}
+              height={200}
+              priority
+              className="h-auto w-40 dark:hidden"
+            />
+            <Image
+              src="/logoPPDark.svg"
+              alt="PlayPadel Logo"
+              width={600}
+              height={200}
+              priority
+              className="hidden h-auto w-40 dark:block"
+            />
           </div>
+        </header>
 
-          {tournament.time && (
-            <div className="flex items-start gap-3">
-              <Clock className="h-5 w-5 text-muted-foreground mt-0.5" />
-              <div>
-                <p className="text-sm font-semibold text-foreground">Date et heure</p>
-                <p className="text-sm text-muted-foreground">
-                  {new Date(tournament.time).toLocaleString("fr-FR")}
-                </p>
-              </div>
-            </div>
-          )}
-
-          <div className="flex items-start gap-3">
-            <Users className="h-5 w-5 text-muted-foreground mt-0.5" />
-            <div>
-              <p className="text-sm font-semibold text-foreground">Joueurs</p>
-              <p className="text-sm text-muted-foreground">
-                {tournament.players.length} joueurs ({tournament.players.filter((p) => p.gender === "M").length}H / {tournament.players.filter((p) => p.gender === "F").length}F)
-              </p>
-            </div>
-          </div>
-
-          {tournament.description && (
-            <div className="flex items-start gap-3">
-              <FileText className="h-5 w-5 text-muted-foreground mt-0.5" />
-              <div>
-                <p className="text-sm font-semibold text-foreground">Description</p>
-                <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-                  {tournament.description}
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Partager ce tournoi */}
-        <div className="mb-8 rounded-xl bg-card border border-border p-6 shadow-sm">
-          <h3 className="text-lg font-semibold text-foreground mb-4">
-            Partager ce tournoi
-          </h3>
-          <div className="space-y-3">
-            <button
-              onClick={handleShare}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary/10 px-4 py-3 font-medium text-primary transition-all hover:bg-primary/20 active:scale-95"
-            >
-              <Share2 className="h-5 w-5" />
-              Partager via...
+        {/* Titre de la page avec bouton retour */}
+        <div className="mx-auto max-w-lg px-6 pt-8 pb-4">
+          <Link href="/home">
+            <button className="mb-4 flex items-center gap-2 text-muted-foreground transition-colors hover:text-foreground">
+              <ArrowLeft className="h-5 w-5" />
+              <span className="text-sm font-medium">Retour</span>
             </button>
-            <div className="flex items-center gap-2 rounded-xl border border-border bg-background px-4 py-3">
-              <input
-                type="text"
-                value={publicTournamentUrl}
-                readOnly
-                className="flex-1 bg-transparent text-sm text-foreground outline-none"
-              />
-              <button
-                onClick={handleCopyLink}
-                className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted/80"
-              >
-                {copied ? (
-                  <>
-                    <Check className="h-4 w-4 text-green-500" />
-                    <span className="text-green-500">Copié!</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="h-4 w-4" />
-                    Copier
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
+          </Link>
+          {editingTitle ? (
+            <input
+              type="text"
+              value={tempTitle}
+              onChange={(e) => setTempTitle(e.target.value)}
+              onBlur={handleSaveTitle}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.currentTarget.blur();
+                }
+                if (e.key === "Escape") {
+                  setTempTitle(tournament.name);
+                  setEditingTitle(false);
+                }
+              }}
+              autoFocus
+              className="w-full text-3xl font-bold text-foreground bg-transparent border-none outline-none focus:outline-none p-0 m-0"
+              style={{ 
+                fontFamily: "inherit",
+                lineHeight: "inherit",
+                letterSpacing: "inherit"
+              }}
+            />
+          ) : (
+            <h1 
+              onClick={() => {
+                setTempTitle(tournament.name);
+                setEditingTitle(true);
+              }}
+              className="text-3xl font-bold text-foreground cursor-text"
+            >
+              {tournament.name}
+            </h1>
+          )}
+          <p className="mt-2 text-muted-foreground">Gestion du tournoi</p>
         </div>
 
-        {/* Génération des matchs */}
-        {matches.length === 0 && (
-          <div className="mb-8 rounded-xl bg-primary/10 border border-primary/20 p-6 text-center">
-            <Trophy className="h-12 w-12 text-primary mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-foreground mb-2">
-              Aucun match généré
-            </h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              Générez les matchs pour commencer le tournoi. Les matchs seront créés selon les règles de l&apos;Americano Mixte.
-            </p>
-            <button
-              onClick={handleGenerateMatches}
-              disabled={isGenerating || !canGenerateMatches}
-              className="rounded-full bg-primary px-6 py-3 font-semibold text-primary-foreground shadow-lg transition-all hover:opacity-90 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isGenerating ? "Génération..." : "Générer les matchs"}
-            </button>
-            {!canGenerateMatches && (
-              <p className="mt-2 text-xs text-muted-foreground">
-                Minimum 4 joueurs avec équilibre H/F requis pour générer les matchs
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* Liste des rounds */}
-        {matches.length > 0 && (
-          <div className="space-y-6">
-            <h3 className="text-lg font-semibold text-foreground">Rounds</h3>
-            {Array.from({ length: rounds }, (_, i) => i + 1).map((round) => {
-              const roundMatches = getMatchesByRound(round);
-              if (roundMatches.length === 0) return null;
-
+        {/* Contenu principal */}
+        <main className="mx-auto max-w-lg px-6 py-4">
+          {/* Navigation des tabs */}
+          <div className="mb-6 flex gap-2 overflow-x-auto pb-2">
+            {[
+              { id: "settings" as const, label: "Settings", icon: Settings },
+              { id: "joueurs" as const, label: "Joueurs", icon: Users },
+              { id: "matchs" as const, label: "Matchs", icon: Trophy },
+              { id: "media" as const, label: "Media", icon: ImageIcon },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
               return (
-                <div key={round} className="rounded-xl bg-card p-4 shadow-sm">
-                  <h4 className="mb-4 text-base font-semibold text-foreground">
-                    Round {round}
-                  </h4>
-                  <div className="space-y-3">
-                    {roundMatches.map((match) => {
-                      const currentScore = match.score || { team1: 0, team2: 0 };
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex items-center gap-2 whitespace-nowrap rounded-xl px-4 py-2 text-sm font-medium transition-all ${
+                    isActive
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted/50 text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
 
-                      const handleScoreChange = (team: "team1" | "team2", value: string) => {
-                        const numValue = parseInt(value) || 0;
-                        const newScore = {
-                          team1: team === "team1" ? numValue : currentScore.team1,
-                          team2: team === "team2" ? numValue : currentScore.team2,
-                        };
-                        if (match.id) {
-                          saveScore(match.id, newScore);
-                        }
-                      };
+          {/* Contenu des tabs */}
+          <div className="min-h-[200px]">
+            {/* Tab Settings */}
+            {activeTab === "settings" && (
+              <div className="space-y-6">
+                {/* Partage */}
+                <div className="rounded-xl bg-card border border-border p-6 shadow-sm">
+                  <h3 className="text-lg font-semibold text-foreground mb-4">
+                    Partager ce tournoi
+                  </h3>
+                  <div className="space-y-3">
+                    <button
+                      onClick={handleShare}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary/10 px-4 py-3 font-medium text-primary transition-all hover:bg-primary/20 active:scale-95"
+                    >
+                      <Share2 className="h-5 w-5" />
+                      Partager via...
+                    </button>
+                    <div className="flex items-center gap-2 rounded-xl border border-border bg-background px-4 py-3">
+                      <input
+                        type="text"
+                        value={publicTournamentUrl}
+                        readOnly
+                        className="flex-1 bg-transparent text-sm text-foreground outline-none"
+                      />
+                      <button
+                        onClick={handleCopyLink}
+                        className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted/80"
+                      >
+                        {copied ? (
+                          <>
+                            <Check className="h-4 w-4 text-green-500" />
+                            <span className="text-green-500">Copié!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-4 w-4" />
+                            Copier
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Visibilité */}
+                <div className="rounded-xl bg-card border border-border p-6 shadow-sm">
+                  <h3 className="text-lg font-semibold text-foreground mb-4">
+                    Visibilité
+                  </h3>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      {tournament.isPublic ? (
+                        <Globe className="h-5 w-5 text-primary" />
+                      ) : (
+                        <Lock className="h-5 w-5 text-muted-foreground" />
+                      )}
+                      <div>
+                        <p className="text-sm font-medium text-foreground">
+                          {tournament.isPublic ? "Public" : "Privé"}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {tournament.isPublic 
+                            ? "Tout le monde peut rejoindre ce tournoi" 
+                            : "Seuls les invités peuvent rejoindre ce tournoi"}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleTogglePublic}
+                      disabled={isSaving}
+                      className={`relative h-7 w-12 rounded-full transition-colors ${
+                        tournament.isPublic ? "bg-primary" : "bg-muted"
+                      } disabled:opacity-50`}
+                    >
+                      <div
+                        className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-md transition-transform ${
+                          tournament.isPublic ? "left-6" : "left-1"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Informations du tournoi */}
+                <div className="rounded-xl bg-card border border-border p-6 shadow-sm">
+                  <h3 className="text-lg font-semibold text-foreground mb-4">
+                    Informations du tournoi
+                  </h3>
+                  <div className="space-y-4">
+                    {/* Lieu */}
+                    <div>
+                      <label className="mb-2 block text-sm font-semibold text-foreground">
+                        Lieu
+                      </label>
+                      {editingLocation ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={tempLocation}
+                            onChange={(e) => setTempLocation(e.target.value)}
+                            className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
+                            placeholder="Lieu du tournoi"
+                          />
+                          <button
+                            onClick={handleSaveLocation}
+                            disabled={isSaving}
+                            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
+                          >
+                            {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sauver"}
+                          </button>
+                          <button
+                            onClick={() => {
+                              setEditingLocation(false);
+                              setTempLocation(tournament.location || "");
+                            }}
+                            className="rounded-lg bg-muted px-4 py-2 text-sm font-medium text-foreground"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                          <span className="text-sm text-foreground">
+                            {tournament.location || "Non spécifié"}
+                          </span>
+                          <button
+                            onClick={() => setEditingLocation(true)}
+                            className="text-sm text-primary hover:underline"
+                          >
+                            Modifier
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Date et heure */}
+                    <div>
+                      <label className="mb-2 block text-sm font-semibold text-foreground">
+                        Date et heure
+                      </label>
+                      {editingTime ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="datetime-local"
+                            value={tempTime ? new Date(tempTime).toISOString().slice(0, 16) : ""}
+                            onChange={(e) => setTempTime(new Date(e.target.value).toISOString())}
+                            className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
+                          />
+                          <button
+                            onClick={handleSaveTime}
+                            disabled={isSaving}
+                            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
+                          >
+                            {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sauver"}
+                          </button>
+                          <button
+                            onClick={() => {
+                              setEditingTime(false);
+                              setTempTime(tournament.time || "");
+                            }}
+                            className="rounded-lg bg-muted px-4 py-2 text-sm font-medium text-foreground"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                          <span className="text-sm text-foreground">
+                            {tournament.time 
+                              ? new Date(tournament.time).toLocaleString("fr-FR")
+                              : "Non spécifié"}
+                          </span>
+                          <button
+                            onClick={() => setEditingTime(true)}
+                            className="text-sm text-primary hover:underline"
+                          >
+                            Modifier
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Tab Joueurs */}
+            {activeTab === "joueurs" && (
+              <div>
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="text-xl font-semibold text-foreground">
+                    Joueurs ({tournament.players.length}/{tournament.maxPlayers || tournament.players.length})
+                  </h2>
+                  {tournament.players.length < (tournament.maxPlayers || 12) && (
+                    <button
+                      onClick={handleAddPlayer}
+                      className="flex items-center gap-2 rounded-lg bg-primary/10 px-3 py-2 text-sm font-medium text-primary transition-all hover:bg-primary/20"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Ajouter
+                    </button>
+                  )}
+                </div>
+
+                <div className="space-y-3 mb-4">
+                  {tournament.players.map((player, index) => (
+                    <div
+                      key={player.id}
+                      className="flex items-center gap-3 rounded-xl bg-card p-3 shadow-sm"
+                    >
+                      <span className="text-sm font-medium text-muted-foreground">
+                        {index + 1}.
+                      </span>
+                      <div className="flex flex-1 items-center gap-2">
+                        {player.photoURL && (
+                          <Image
+                            src={player.photoURL}
+                            alt={player.name}
+                            width={24}
+                            height={24}
+                            className="h-6 w-6 rounded-full"
+                          />
+                        )}
+                        <PlayerSelector
+                          value={player.name}
+                          onChange={(selectedPlayer) =>
+                            handleUpdatePlayer(player.id, {
+                              name: selectedPlayer.name,
+                              userId: selectedPlayer.userId,
+                              photoURL: selectedPlayer.photoURL,
+                            })
+                          }
+                          onRemove={() =>
+                            handleUpdatePlayer(player.id, { name: "", userId: undefined, photoURL: undefined })
+                          }
+                          gender={player.gender}
+                          placeholder={`Joueur ${index + 1}`}
+                          currentPlayerId={player.userId}
+                          usedUserIds={tournament.players
+                            .filter((p) => p.id !== player.id && p.userId)
+                            .map((p) => p.userId!)}
+                        />
+                      </div>
+                      {/* Toggle M/F */}
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`text-sm font-semibold ${
+                            player.gender === "M"
+                              ? "text-primary"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          M
+                        </span>
+                        <button
+                          onClick={() =>
+                            handleUpdatePlayer(player.id, {
+                              name: player.name,
+                              gender: player.gender === "M" ? "F" : "M",
+                            })
+                          }
+                          className={`relative h-7 w-12 rounded-full transition-colors ${
+                            player.gender === "M" ? "bg-primary" : "bg-[#e05d38]"
+                          }`}
+                        >
+                          <div
+                            className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-md transition-transform ${
+                              player.gender === "M"
+                                ? "left-1"
+                                : "left-6"
+                            }`}
+                          />
+                        </button>
+                        <span
+                          className={`text-sm font-semibold ${
+                            player.gender === "F"
+                              ? "text-[#e05d38]"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          F
+                        </span>
+                      </div>
+                      {/* Remove button */}
+                      <button
+                        onClick={() => handleRemovePlayer(player.id)}
+                        disabled={tournament.players.length <= 4}
+                        className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
+                          tournament.players.length <= 4
+                            ? "cursor-not-allowed bg-muted text-muted-foreground/50"
+                            : "bg-muted text-muted-foreground hover:bg-destructive hover:text-destructive-foreground"
+                        }`}
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  onClick={handleSavePlayers}
+                  disabled={isSaving}
+                  className="w-full rounded-full bg-primary px-8 py-4 text-lg font-semibold text-primary-foreground shadow-lg transition-all duration-200 hover:opacity-90 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSaving ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      Sauvegarde...
+                    </span>
+                  ) : (
+                    "Sauvegarder les joueurs"
+                  )}
+                </button>
+              </div>
+            )}
+
+            {/* Tab Matchs */}
+            {activeTab === "matchs" && (
+              <div>
+                {matches.length === 0 ? (
+                  <div className="rounded-xl bg-primary/10 border border-primary/20 p-6 text-center">
+                    <Trophy className="h-12 w-12 text-primary mx-auto mb-4" />
+                    <h3 className="text-lg font-semibold text-foreground mb-2">
+                      Aucun match généré
+                    </h3>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Générez les matchs pour commencer le tournoi. Les matchs seront créés selon les règles de l&apos;Americano Mixte.
+                    </p>
+                    <button
+                      onClick={handleGenerateMatches}
+                      disabled={isGenerating || !canGenerateMatches}
+                      className="rounded-full bg-primary px-6 py-3 font-semibold text-primary-foreground shadow-lg transition-all hover:opacity-90 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isGenerating ? "Génération..." : "Générer les matchs"}
+                    </button>
+                    {!canGenerateMatches && (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Minimum 4 joueurs avec équilibre H/F requis pour générer les matchs
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-lg font-semibold text-foreground">Rounds</h3>
+                      <button
+                        onClick={handleRegenerateMatches}
+                        disabled={isGenerating}
+                        className="rounded-lg bg-destructive/10 px-4 py-2 text-sm font-medium text-destructive transition-all hover:bg-destructive/20 disabled:opacity-50"
+                      >
+                        {isGenerating ? "Régénération..." : "Régénérer les matchs"}
+                      </button>
+                    </div>
+                    {Array.from({ length: rounds }, (_, i) => i + 1).map((round) => {
+                      const roundMatches = getMatchesByRound(round);
+                      if (roundMatches.length === 0) return null;
 
                       return (
-                        <div
-                          key={match.id}
-                          className="rounded-lg border border-border bg-background p-4"
-                        >
-                          <div className="mb-4 text-xs font-medium text-muted-foreground">
-                            {getCourtName(match.courtId)}
-                          </div>
+                        <div key={round} className="rounded-xl bg-card p-4 shadow-sm">
+                          <h4 className="mb-4 text-base font-semibold text-foreground">
+                            Round {round}
+                          </h4>
+                          <div className="space-y-3">
+                            {roundMatches.map((match) => {
+                              const currentScore = match.score || { team1: 0, team2: 0 };
 
-                          {/* Équipe 1 */}
-                          <div className="mb-3 flex items-center justify-between">
-                            <div className="flex-1">
-                              <p className="text-sm font-medium text-foreground">
-                                {getPlayerName(match.team1[0])} & {getPlayerName(match.team1[1])}
-                              </p>
-                            </div>
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              maxLength={2}
-                              value={currentScore.team1 || 0}
-                              onChange={(e) => {
-                                const value = e.target.value.replace(/\D/g, "").slice(0, 2);
-                                if (value === "" || parseInt(value) >= 0) {
-                                  handleScoreChange("team1", value || "0");
+                              const handleScoreChange = (team: "team1" | "team2", value: string) => {
+                                const numValue = parseInt(value) || 0;
+                                const newScore = {
+                                  team1: team === "team1" ? numValue : currentScore.team1,
+                                  team2: team === "team2" ? numValue : currentScore.team2,
+                                };
+                                if (match.id) {
+                                  saveScore(match.id, newScore);
                                 }
-                              }}
-                              onFocus={(e) => e.target.select()}
-                              className="w-14 text-right text-3xl font-bold text-foreground outline-none border-2 border-border focus:border-primary rounded px-2 py-1 bg-transparent transition-colors"
-                              style={{ fontFamily: "var(--font-digital)" }}
-                            />
+                              };
+
+                              return (
+                                <div
+                                  key={match.id}
+                                  className="rounded-lg border border-border bg-background p-4"
+                                >
+                                  <div className="mb-4 text-xs font-medium text-muted-foreground">
+                                    {getCourtName(match.courtId)}
+                                  </div>
+
+                                  {/* Équipe 1 */}
+                                  <div className="mb-3 flex items-center justify-between">
+                                    <div className="flex-1">
+                                      <p className="text-sm font-medium text-foreground">
+                                        {getPlayerName(match.team1[0])} & {getPlayerName(match.team1[1])}
+                                      </p>
+                                    </div>
+                                    <input
+                                      type="text"
+                                      inputMode="numeric"
+                                      maxLength={2}
+                                      value={currentScore.team1 || 0}
+                                      onChange={(e) => {
+                                        const value = e.target.value.replace(/\D/g, "").slice(0, 2);
+                                        if (value === "" || parseInt(value) >= 0) {
+                                          handleScoreChange("team1", value || "0");
+                                        }
+                                      }}
+                                      onFocus={(e) => e.target.select()}
+                                      className="w-14 text-right text-3xl font-bold text-foreground outline-none border-2 border-border focus:border-primary rounded px-2 py-1 bg-transparent transition-colors"
+                                      style={{ fontFamily: "var(--font-digital)" }}
+                                    />
+                                  </div>
+
+                                  <div className="my-2 text-center text-xs text-muted-foreground">VS</div>
+
+                                  {/* Équipe 2 */}
+                                  <div className="mb-3 flex items-center justify-between">
+                                    <div className="flex-1">
+                                      <p className="text-sm font-medium text-foreground">
+                                        {getPlayerName(match.team2[0])} & {getPlayerName(match.team2[1])}
+                                      </p>
+                                    </div>
+                                    <input
+                                      type="text"
+                                      inputMode="numeric"
+                                      maxLength={2}
+                                      value={currentScore.team2 || 0}
+                                      onChange={(e) => {
+                                        const value = e.target.value.replace(/\D/g, "").slice(0, 2);
+                                        if (value === "" || parseInt(value) >= 0) {
+                                          handleScoreChange("team2", value || "0");
+                                        }
+                                      }}
+                                      onFocus={(e) => e.target.select()}
+                                      className="w-14 text-right text-3xl font-bold text-foreground outline-none border-2 border-border focus:border-primary rounded px-2 py-1 bg-transparent transition-colors"
+                                      style={{ fontFamily: "var(--font-digital)" }}
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
-
-                          <div className="my-2 text-center text-xs text-muted-foreground">VS</div>
-
-                          {/* Équipe 2 */}
-                          <div className="mb-3 flex items-center justify-between">
-                            <div className="flex-1">
-                              <p className="text-sm font-medium text-foreground">
-                                {getPlayerName(match.team2[0])} & {getPlayerName(match.team2[1])}
-                              </p>
-                            </div>
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              maxLength={2}
-                              value={currentScore.team2 || 0}
-                              onChange={(e) => {
-                                const value = e.target.value.replace(/\D/g, "").slice(0, 2);
-                                if (value === "" || parseInt(value) >= 0) {
-                                  handleScoreChange("team2", value || "0");
-                                }
-                              }}
-                              onFocus={(e) => e.target.select()}
-                              className="w-14 text-right text-3xl font-bold text-foreground outline-none border-2 border-border focus:border-primary rounded px-2 py-1 bg-transparent transition-colors"
-                              style={{ fontFamily: "var(--font-digital)" }}
-                            />
-                          </div>
-
                         </div>
                       );
                     })}
                   </div>
-                </div>
-              );
-            })}
+                )}
+              </div>
+            )}
+
+            {/* Tab Media */}
+            {activeTab === "media" && (
+              <div className="rounded-xl bg-muted/50 border border-border p-6 text-center">
+                <ImageIcon className="h-12 w-12 text-muted-foreground mx-auto mb-4 opacity-50" />
+                <p className="text-sm text-muted-foreground">
+                  Fonctionnalité d&apos;upload de médias à venir.
+                </p>
+                <p className="text-sm text-muted-foreground mt-2">
+                  Vous pourrez bientôt ajouter des photos et vidéos de votre tournoi.
+                </p>
+              </div>
+            )}
           </div>
-        )}
-      </main>
+        </main>
       </div>
     </ProtectedRoute>
   );
 }
-
