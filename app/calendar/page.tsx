@@ -2,10 +2,12 @@
 
 import Image from "next/image";
 import BottomNav from "../components/BottomNav";
+import { ProtectedRoute } from "../components/ProtectedRoute";
 
 export default function CalendarPage() {
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <ProtectedRoute>
+      <div className="min-h-screen bg-background pb-24">
       {/* Header avec logo */}
       <header className="border-b border-border/50 bg-card/50 backdrop-blur-sm">
         <div className="mx-auto flex max-w-lg items-center justify-center px-6 py-6">
@@ -39,7 +41,8 @@ export default function CalendarPage() {
       </main>
 
       <BottomNav />
-    </div>
+      </div>
+    </ProtectedRoute>
   );
 }
 

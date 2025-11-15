@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import BottomNav from "../components/BottomNav";
+import { ProtectedRoute } from "../components/ProtectedRoute";
 import { Trophy, Users, Timer, Lock } from "lucide-react";
 
 export default function TournoiPage() {
@@ -46,7 +47,8 @@ export default function TournoiPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <ProtectedRoute>
+      <div className="min-h-screen bg-background pb-24">
       {/* Header avec logo */}
       <header className="border-b border-border/50 bg-card/50 backdrop-blur-sm">
         <div className="mx-auto flex max-w-lg items-center justify-center px-6 py-6">
@@ -174,7 +176,8 @@ export default function TournoiPage() {
 
       {/* Bottom Navigation */}
       <BottomNav />
-    </div>
+      </div>
+    </ProtectedRoute>
   );
 }
 

@@ -4,11 +4,12 @@ import Image from "next/image";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useCallback } from "react";
-import { ArrowLeft, Trophy, MapPin, Clock, Users, FileText } from "lucide-react";
+import { ArrowLeft, Trophy, MapPin, Clock, Users, FileText, Share2, Copy, Check } from "lucide-react";
+import { ProtectedRoute } from "../../components/ProtectedRoute";
 import { getTournamentById, updateTournament } from "@/lib/tournaments";
 import { getMatchesByTournament, createMatches, updateMatch } from "@/lib/matches";
-import { generateMatches, formatTeamName } from "@/lib/matchGenerator";
-import { Tournament, Match, Player } from "@/lib/types";
+import { generateMatches } from "@/lib/matchGenerator";
+import { Tournament, Match } from "@/lib/types";
 
 export default function TournamentDetailPage() {
   const params = useParams();
@@ -19,10 +20,12 @@ export default function TournamentDetailPage() {
   const [matches, setMatches] = useState<Match[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [copied, setCopied] = useState(false);
   const saveTimeouts = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
   useEffect(() => {
     loadTournament();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tournamentId]);
 
   const loadTournament = async () => {
@@ -130,6 +133,41 @@ export default function TournamentDetailPage() {
 
   const rounds = matches.length > 0 ? Math.max(...matches.map((m) => m.round)) : 0;
 
+  // Vérifier si on peut générer les matchs (minimum 4 joueurs avec équilibre H/F)
+  const canGenerateMatches = tournament && tournament.players && tournament.players.length >= 4 && 
+    tournament.players.filter((p) => p.gender === "M").length === 
+    tournament.players.filter((p) => p.gender === "F").length;
+
+  // URL publique du tournoi
+  const publicTournamentUrl = typeof window !== "undefined" 
+    ? `${window.location.origin}/join/${tournamentId}`
+    : "";
+
+  const handleShare = async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: tournament?.name || "Tournoi PlayPadel",
+          text: `Rejoignez le tournoi: ${tournament?.name}`,
+          url: publicTournamentUrl,
+        });
+      } catch {
+        // L'utilisateur a annulé le partage
+        console.log("Share cancelled");
+      }
+    }
+  };
+
+  const handleCopyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(publicTournamentUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      console.error("Error copying link:", error);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -146,7 +184,8 @@ export default function TournamentDetailPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background pb-8">
+    <ProtectedRoute>
+      <div className="min-h-screen bg-background pb-8">
       {/* Header avec logo */}
       <header className="border-b border-border/50 bg-card/50 backdrop-blur-sm">
         <div className="mx-auto flex max-w-lg items-center justify-center px-6 py-6">
@@ -230,6 +269,46 @@ export default function TournamentDetailPage() {
           )}
         </div>
 
+        {/* Partager ce tournoi */}
+        <div className="mb-8 rounded-xl bg-card border border-border p-6 shadow-sm">
+          <h3 className="text-lg font-semibold text-foreground mb-4">
+            Partager ce tournoi
+          </h3>
+          <div className="space-y-3">
+            <button
+              onClick={handleShare}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary/10 px-4 py-3 font-medium text-primary transition-all hover:bg-primary/20 active:scale-95"
+            >
+              <Share2 className="h-5 w-5" />
+              Partager via...
+            </button>
+            <div className="flex items-center gap-2 rounded-xl border border-border bg-background px-4 py-3">
+              <input
+                type="text"
+                value={publicTournamentUrl}
+                readOnly
+                className="flex-1 bg-transparent text-sm text-foreground outline-none"
+              />
+              <button
+                onClick={handleCopyLink}
+                className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted/80"
+              >
+                {copied ? (
+                  <>
+                    <Check className="h-4 w-4 text-green-500" />
+                    <span className="text-green-500">Copié!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-4 w-4" />
+                    Copier
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* Génération des matchs */}
         {matches.length === 0 && (
           <div className="mb-8 rounded-xl bg-primary/10 border border-primary/20 p-6 text-center">
@@ -238,15 +317,20 @@ export default function TournamentDetailPage() {
               Aucun match généré
             </h3>
             <p className="text-sm text-muted-foreground mb-4">
-              Générez les matchs pour commencer le tournoi. Les matchs seront créés selon les règles de l'Americano Mixte.
+              Générez les matchs pour commencer le tournoi. Les matchs seront créés selon les règles de l&apos;Americano Mixte.
             </p>
             <button
               onClick={handleGenerateMatches}
-              disabled={isGenerating}
-              className="rounded-full bg-primary px-6 py-3 font-semibold text-primary-foreground shadow-lg transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
+              disabled={isGenerating || !canGenerateMatches}
+              className="rounded-full bg-primary px-6 py-3 font-semibold text-primary-foreground shadow-lg transition-all hover:opacity-90 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isGenerating ? "Génération..." : "Générer les matchs"}
             </button>
+            {!canGenerateMatches && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Minimum 4 joueurs avec équilibre H/F requis pour générer les matchs
+              </p>
+            )}
           </div>
         )}
 
@@ -347,7 +431,8 @@ export default function TournamentDetailPage() {
           </div>
         )}
       </main>
-    </div>
+      </div>
+    </ProtectedRoute>
   );
 }
 

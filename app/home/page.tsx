@@ -5,9 +5,11 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import BottomNav from "../components/BottomNav";
+import { ProtectedRoute } from "../components/ProtectedRoute";
 import { TrendingUp, Users, Trophy, Calendar, CheckCircle2, X, ChevronRight } from "lucide-react";
 import { getTournaments } from "@/lib/tournaments";
 import { Tournament } from "@/lib/types";
+import { useAuth } from "../contexts/AuthContext";
 
 function SuccessMessage() {
   const searchParams = useSearchParams();
@@ -51,13 +53,16 @@ function SuccessMessage() {
 }
 
 export default function HomePage() {
+  const { user } = useAuth();
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [isLoadingTournaments, setIsLoadingTournaments] = useState(true);
 
   const loadTournaments = async () => {
+    if (!user) return;
+    
     try {
       setIsLoadingTournaments(true);
-      const data = await getTournaments();
+      const data = await getTournaments(user.uid);
       setTournaments(data);
     } catch (error) {
       console.error("Error loading tournaments:", error);
@@ -67,8 +72,10 @@ export default function HomePage() {
   };
 
   useEffect(() => {
-    loadTournaments();
-  }, []);
+    if (user) {
+      loadTournaments();
+    }
+  }, [user]);
 
   // Recharger les tournois quand on revient sur la page (après création)
   useEffect(() => {
@@ -124,7 +131,8 @@ export default function HomePage() {
   ];
 
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <ProtectedRoute>
+      <div className="min-h-screen bg-background pb-24">
       {/* Header avec logo */}
       <header className="border-b border-border/50 bg-card/50 backdrop-blur-sm">
         <div className="mx-auto flex max-w-lg items-center justify-center px-6 py-6">
@@ -212,9 +220,9 @@ export default function HomePage() {
                           </>
                         )}
                       </div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {tournament.players.length} joueurs • {tournament.courts.length} terrain{tournament.courts.length > 1 ? "s" : ""}
-                      </div>
+                              <div className="mt-1 text-xs text-muted-foreground">
+                                {tournament.players.length}/{tournament.maxPlayers || tournament.players.length} joueurs • {tournament.courts.length} terrain{tournament.courts.length > 1 ? "s" : ""}
+                              </div>
                     </div>
                     <ChevronRight className="h-5 w-5 text-muted-foreground" />
                   </div>
@@ -308,7 +316,8 @@ export default function HomePage() {
 
       {/* Bottom Navigation */}
       <BottomNav />
-    </div>
+      </div>
+    </ProtectedRoute>
   );
 }
 

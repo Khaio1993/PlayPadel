@@ -6,6 +6,8 @@ export interface Player {
   id: string;
   name: string;
   gender: Gender;
+  userId?: string; // ID de l'utilisateur Firebase si sélectionné depuis un profil
+  photoURL?: string; // Photo de profil si disponible
 }
 
 export interface Court {
@@ -24,6 +26,8 @@ export interface Tournament {
   type: "americano-mixte" | "americano" | "mexicano" | "tournoi-complet";
   createdAt: Date;
   status: "draft" | "active" | "completed";
+  userId: string; // ID de l'utilisateur qui a créé le tournoi
+  maxPlayers?: number; // Nombre maximum de joueurs prévus pour le tournoi
 }
 
 export interface Match {

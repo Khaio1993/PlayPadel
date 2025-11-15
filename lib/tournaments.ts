@@ -38,16 +38,25 @@ export const createTournament = async (
 };
 
 /**
- * Récupérer tous les tournois
+ * Récupérer tous les tournois d'un utilisateur
  */
-export const getTournaments = async (): Promise<Tournament[]> => {
+export const getTournaments = async (userId?: string): Promise<Tournament[]> => {
   try {
-    const querySnapshot = await getDocs(
-      query(
+    let q;
+    if (userId) {
+      q = query(
+        collection(db, TOURNAMENTS_COLLECTION),
+        where("userId", "==", userId),
+        orderBy("createdAt", "desc")
+      );
+    } else {
+      q = query(
         collection(db, TOURNAMENTS_COLLECTION),
         orderBy("createdAt", "desc")
-      )
-    );
+      );
+    }
+    
+    const querySnapshot = await getDocs(q);
     return querySnapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),

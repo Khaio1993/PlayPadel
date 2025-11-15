@@ -5,12 +5,18 @@ import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Plus, X, MapPin, Clock, FileText, Loader2 } from "lucide-react";
+import { ProtectedRoute } from "../../components/ProtectedRoute";
+import { useAuth } from "../../contexts/AuthContext";
+import { PlayerSelector } from "../../components/PlayerSelector";
 import { createTournament } from "@/lib/tournaments";
+import { createOrUpdateUserProfile } from "@/lib/users";
 
 type Player = {
   id: string;
   name: string;
   gender: "M" | "F";
+  userId?: string;
+  photoURL?: string;
 };
 
 type Court = {
@@ -19,6 +25,7 @@ type Court = {
 };
 
 export default function AmericanoMixtePage() {
+  const { user } = useAuth();
   const [tournamentName, setTournamentName] = useState(
     "Saturday Morning Padel Mixed Americano"
   );
@@ -54,8 +61,21 @@ export default function AmericanoMixtePage() {
     }
   };
 
-  const updatePlayerName = (id: string, name: string) => {
-    setPlayers(players.map((p) => (p.id === id ? { ...p, name } : p)));
+  const updatePlayer = (
+    id: string,
+    playerData: {
+      name: string;
+      userId?: string;
+      photoURL?: string;
+    }
+  ) => {
+    setPlayers(
+      players.map((p) =>
+        p.id === id
+          ? { ...p, name: playerData.name, userId: playerData.userId, photoURL: playerData.photoURL }
+          : p
+      )
+    );
   };
 
   const togglePlayerGender = (id: string) => {
@@ -81,8 +101,9 @@ export default function AmericanoMixtePage() {
     setCourts(courts.map((c) => (c.id === id ? { ...c, name } : c)));
   };
 
-  const maleCount = players.filter((p) => p.gender === "M").length;
-  const femaleCount = players.filter((p) => p.gender === "F").length;
+  const namedPlayers = players.filter((p) => p.name.trim().length > 0);
+  const maleCount = namedPlayers.filter((p) => p.gender === "M").length;
+  const femaleCount = namedPlayers.filter((p) => p.gender === "F").length;
   const isBalanced = maleCount === femaleCount;
 
   // Validation des données
@@ -92,10 +113,10 @@ export default function AmericanoMixtePage() {
     }
 
     if (players.length < 4) {
-      return "Minimum 4 joueurs requis";
+      return "Minimum 4 places requises";
     }
 
-    // Vérifier que tous les joueurs ont un nom unique
+    // Vérifier que les joueurs avec nom ont des noms uniques
     const playerNames = players
       .map((p) => p.name.trim())
       .filter((name) => name.length > 0);
@@ -105,12 +126,15 @@ export default function AmericanoMixtePage() {
       return "Les noms des joueurs doivent être uniques";
     }
 
-    if (playerNames.length < 4) {
-      return "Tous les joueurs doivent avoir un nom";
-    }
+    // Vérifier l'équilibre seulement si on a au moins 4 joueurs avec nom
+    if (playerNames.length >= 4) {
+      const namedPlayers = players.filter((p) => p.name.trim().length > 0);
+      const namedMales = namedPlayers.filter((p) => p.gender === "M").length;
+      const namedFemales = namedPlayers.filter((p) => p.gender === "F").length;
 
-    if (!isBalanced) {
-      return "Le nombre d'hommes et de femmes doit être égal";
+      if (namedMales !== namedFemales) {
+        return "Le nombre d'hommes et de femmes doit être égal parmi les joueurs inscrits";
+      }
     }
 
     return null;
@@ -129,17 +153,30 @@ export default function AmericanoMixtePage() {
 
     setIsLoading(true);
 
+    if (!user) {
+      setError("Vous devez être connecté pour créer un tournoi");
+      return;
+    }
+
     try {
+      // Créer/mettre à jour le profil de l'utilisateur actuel
+      await createOrUpdateUserProfile(user.uid, {
+        email: user.email || "",
+        displayName: user.displayName || "User",
+        photoURL: user.photoURL || undefined,
+      });
       // Préparer les données du tournoi
       const tournamentData = {
         name: tournamentName.trim(),
         location: location.trim(),
         time: time || new Date().toISOString(),
         description: description.trim(),
-        players: players.filter((p) => p.name.trim().length > 0),
+        players: players.filter((p) => p.name.trim().length > 0), // Seulement les joueurs avec nom
         courts: courts.length > 0 ? courts : [{ id: "default", name: "Court 1" }],
         type: "americano-mixte" as const,
         status: "draft" as const,
+        userId: user.uid,
+        maxPlayers: players.length, // Nombre total de places disponibles
       };
 
       // Créer le tournoi dans Firebase
@@ -160,7 +197,8 @@ export default function AmericanoMixtePage() {
   };
 
   return (
-    <div className="min-h-screen bg-background pb-8">
+    <ProtectedRoute>
+      <div className="min-h-screen bg-background pb-8">
       {/* Header avec logo */}
       <header className="border-b border-border/50 bg-card/50 backdrop-blur-sm">
         <div className="mx-auto flex max-w-lg items-center justify-center px-6 py-6">
@@ -273,19 +311,43 @@ export default function AmericanoMixtePage() {
                 <span className="text-sm font-medium text-muted-foreground">
                   {index + 1}.
                 </span>
-                <input
-                  type="text"
-                  value={player.name}
-                  onChange={(e) => updatePlayerName(player.id, e.target.value)}
-                  className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground transition-colors focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/20"
-                  placeholder={`Player ${index + 1}`}
-                />
+                <div className="flex flex-1 items-center gap-2">
+                  {player.photoURL && (
+                    <Image
+                      src={player.photoURL}
+                      alt={player.name}
+                      width={24}
+                      height={24}
+                      className="h-6 w-6 rounded-full"
+                    />
+                  )}
+                  <PlayerSelector
+                    value={player.name}
+                    onChange={(selectedPlayer) =>
+                      updatePlayer(player.id, {
+                        name: selectedPlayer.name,
+                        userId: selectedPlayer.userId,
+                        photoURL: selectedPlayer.photoURL,
+                      })
+                    }
+                    onRemove={() =>
+                      updatePlayer(player.id, { name: "", userId: undefined, photoURL: undefined })
+                    }
+                    gender={player.gender}
+                    placeholder={`Player ${index + 1}`}
+                    currentPlayerId={player.userId}
+                    usedUserIds={players
+                      .filter((p) => p.id !== player.id && p.userId)
+                      .map((p) => p.userId!)
+                    }
+                  />
+                </div>
                 {/* Toggle M/F */}
                 <div className="flex items-center gap-2">
                   <span
                     className={`text-sm font-semibold ${
                       player.gender === "M"
-                        ? "text-blue-500"
+                        ? "text-primary"
                         : "text-muted-foreground"
                     }`}
                   >
@@ -294,7 +356,7 @@ export default function AmericanoMixtePage() {
                   <button
                     onClick={() => togglePlayerGender(player.id)}
                     className={`relative h-7 w-12 rounded-full transition-colors ${
-                      player.gender === "M" ? "bg-blue-500" : "bg-pink-500"
+                      player.gender === "M" ? "bg-primary" : "bg-[#e05d38]"
                     }`}
                   >
                     <div
@@ -308,7 +370,7 @@ export default function AmericanoMixtePage() {
                   <span
                     className={`text-sm font-semibold ${
                       player.gender === "F"
-                        ? "text-pink-500"
+                        ? "text-[#e05d38]"
                         : "text-muted-foreground"
                     }`}
                   >
@@ -345,19 +407,24 @@ export default function AmericanoMixtePage() {
           {/* Players Info */}
           <div className="mt-3 rounded-lg bg-muted/50 p-3">
             <p className="text-xs text-muted-foreground">
-              Minimum 4 players with unique names, equal males and females.
+              {players.length} places disponibles. Minimum 4 players with unique names, equal males and females.
             </p>
             <div className="mt-2 flex gap-4 text-xs">
-              <span className="text-blue-500">
+              <span className="text-primary">
                 ♂ Males: {maleCount}
               </span>
-              <span className="text-pink-500">
+              <span className="text-[#e05d38]">
                 ♀ Females: {femaleCount}
               </span>
-              {!isBalanced && (
+              {players.filter((p) => p.name.trim().length > 0).length >= 4 && !isBalanced && (
                 <span className="text-destructive">⚠ Not balanced</span>
               )}
-              {isBalanced && <span className="text-green-500">✓ Balanced</span>}
+              {players.filter((p) => p.name.trim().length > 0).length >= 4 && isBalanced && (
+                <span className="text-green-500">✓ Balanced</span>
+              )}
+            </div>
+            <div className="mt-2 text-xs font-medium text-foreground">
+              Inscrits: {players.filter((p) => p.name.trim().length > 0).length}/{players.length}
             </div>
           </div>
         </div>
@@ -420,7 +487,7 @@ export default function AmericanoMixtePage() {
         {/* Create Tournament Button */}
         <button
           onClick={handleCreateTournament}
-          disabled={isLoading || !isBalanced}
+          disabled={isLoading}
           className="w-full rounded-full bg-primary px-8 py-4 text-lg font-semibold text-primary-foreground shadow-lg transition-all duration-200 hover:opacity-90 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
         >
           {isLoading ? (
@@ -433,6 +500,7 @@ export default function AmericanoMixtePage() {
           )}
         </button>
       </main>
-    </div>
+      </div>
+    </ProtectedRoute>
   );
 }
