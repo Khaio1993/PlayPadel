@@ -1,36 +1,132 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# PlayPadel 🎾
 
-## Getting Started
+Application Next.js pour organiser des tournois de padel Americano mixte.
 
-First, run the development server:
+## 🚀 Démarrage
+
+### Installation des dépendances
+
+```bash
+npm install
+```
+
+### Configuration Firebase
+
+1. Copiez le fichier `.env.example` en `.env.local`
+2. Ajoutez vos clés Firebase dans `.env.local`
+3. Les clés Firebase se trouvent dans votre [Console Firebase](https://console.firebase.google.com/)
+
+```bash
+cp .env.example .env.local
+```
+
+### Lancement du serveur de développement
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Ouvrez [http://localhost:3000](http://localhost:3000) dans votre navigateur pour voir le résultat.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 🎨 Design
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Thème
+L'application utilise Tailwind CSS 4.0 avec un thème personnalisé qui s'adapte automatiquement au mode sombre ou clair du système.
 
-## Learn More
+### Polices
+- **Sans Serif** : Inter (texte principal)
+- **Serif** : Source Serif 4 (titres et emphases)
+- **Monospace** : JetBrains Mono (code)
 
-To learn more about Next.js, take a look at the following resources:
+### Couleurs principales
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+#### Mode clair
+- Background: `#e8ebed`
+- Primary: `#032d3c`
+- Accent: `#d6e4f0`
+- Primary Action: `#e05d38`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+#### Mode sombre
+- Background: `#1a212d`
+- Primary: `#94fc13` (vert lime)
+- Card: `#2a3040`
+- Accent: `#2a3656`
 
-## Deploy on Vercel
+## 📱 Optimisation mobile
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+L'application est conçue en priorité pour les appareils mobiles avec :
+- Viewport optimisé pour mobile
+- Thème adaptatif automatique (clair/sombre)
+- Interface responsive
+- Logo adaptatif au thème
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 🏗️ Structure
+
+```
+PlayPadel/
+├── app/
+│   ├── components/      # Composants réutilisables
+│   │   └── BottomNav.tsx
+│   ├── home/           # Page d'accueil avec stats
+│   ├── tournoi/        # Pages de tournois
+│   │   ├── americano-mixte/  # Configuration tournoi
+│   │   └── page.tsx    # Sélection type de tournoi
+│   ├── calendar/       # Page calendrier
+│   ├── profile/        # Page profil
+│   ├── globals.css     # Styles globaux et thème Tailwind
+│   ├── layout.tsx      # Layout principal avec polices
+│   └── page.tsx        # Landing page
+├── lib/
+│   ├── firebase.ts     # Configuration Firebase
+│   └── README.md       # Documentation Firebase
+├── public/
+│   ├── logoPPLight.svg # Logo mode clair
+│   ├── logoPPDark.svg  # Logo mode sombre
+│   └── GetStartedImage.png # Image d'accueil
+├── .env.local          # Variables d'environnement (non versionné)
+├── .env.example        # Template des variables d'environnement
+└── ...
+```
+
+## 🛠️ Technologies
+
+- **Framework** : Next.js 16.0.1 (App Router)
+- **Styling** : Tailwind CSS 4.0
+- **Langage** : TypeScript
+- **Backend** : Firebase (Firestore Database, Authentication)
+- **Fonts** : Google Fonts (Inter, Source Serif 4, JetBrains Mono)
+- **Icons** : Lucide React
+
+## 🔥 Firebase
+
+L'application utilise Firebase pour :
+- **Firestore** : Base de données pour stocker les tournois, joueurs, etc.
+- **Authentication** : Gestion des utilisateurs (à venir)
+
+Consultez `lib/README.md` pour plus de détails sur l'utilisation de Firebase.
+
+## 📝 Fonctionnalités
+
+### ✅ Implémenté
+- [x] Landing page avec image plein écran
+- [x] Thème adaptatif (clair/sombre)
+- [x] Page d'accueil avec statistiques
+- [x] Bottom navigation
+- [x] Sélection type de tournoi
+- [x] Configuration tournoi Americano Mixte
+  - Nom du tournoi, lieu, heure
+  - Gestion des joueurs (4-12 joueurs)
+  - Toggle Homme/Femme
+  - Gestion des terrains
+  - Description/Règles
+
+### 🚧 À venir
+- [ ] Sauvegarder les tournois dans Firebase
+- [ ] Générer les matchs Americano
+- [ ] Tableau des scores en temps réel
+- [ ] Historique des tournois
+- [ ] Authentification utilisateurs
+
+## 📄 Licence
+
+Privé - Tous droits réservés
