@@ -27,15 +27,31 @@ const orbitron = Orbitron({
 export const metadata: Metadata = {
   title: "PlayPadel - Organisez vos tournois Americano",
   description: "Application pour organiser des tournois de padel Americano mixte",
+  manifest: "/manifest.json",
   viewport: {
     width: "device-width",
     initialScale: 1,
     maximumScale: 1,
+    userScalable: false,
   },
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#e8ebed" },
     { media: "(prefers-color-scheme: dark)", color: "#1a212d" },
   ],
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "PlayPadel",
+  },
+  icons: {
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+    ],
+  },
 };
 
 export default function RootLayout({

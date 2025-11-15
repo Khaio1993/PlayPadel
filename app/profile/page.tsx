@@ -96,14 +96,25 @@ export default function ProfilePage() {
     try {
       const displayName = `${firstName} ${lastName}`.trim();
       
-      await updateUserProfile(user.uid, {
+      // Préparer les données en ne gardant que les valeurs non vides
+      const profileData: any = {
         firstName,
         lastName,
         displayName,
         dateOfBirth,
-        phoneNumber: phoneNumber || undefined,
-        preferredSide: preferredSide || undefined,
-      });
+      };
+      
+      // Ajouter phoneNumber seulement s'il n'est pas vide
+      if (phoneNumber && phoneNumber.trim().length > 0) {
+        profileData.phoneNumber = phoneNumber.trim();
+      }
+      
+      // Ajouter preferredSide seulement s'il est défini
+      if (preferredSide) {
+        profileData.preferredSide = preferredSide;
+      }
+      
+      await updateUserProfile(user.uid, profileData);
 
       // Mettre à jour l'état local directement sans recharger
       setUserProfile({
@@ -112,7 +123,7 @@ export default function ProfilePage() {
         lastName,
         displayName,
         dateOfBirth,
-        phoneNumber: phoneNumber || undefined,
+        phoneNumber: phoneNumber && phoneNumber.trim().length > 0 ? phoneNumber.trim() : undefined,
         preferredSide: preferredSide || undefined,
       });
       

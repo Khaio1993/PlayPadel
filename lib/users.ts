@@ -166,14 +166,21 @@ export const updateUserProfile = async (
 ): Promise<void> => {
   try {
     const userRef = doc(db, USERS_COLLECTION, userId);
-    await setDoc(
-      userRef,
-      {
-        ...data,
-        updatedAt: Timestamp.now(),
-      },
-      { merge: true }
-    );
+    
+    // Nettoyer l'objet en supprimant les valeurs undefined (Firebase ne les accepte pas)
+    const cleanedData: Record<string, any> = {
+      updatedAt: Timestamp.now(),
+    };
+    
+    // Ne copier que les propriétés qui ne sont pas undefined
+    Object.keys(data).forEach((key) => {
+      const value = data[key as keyof UserProfile];
+      if (value !== undefined) {
+        cleanedData[key] = value;
+      }
+    });
+    
+    await setDoc(userRef, cleanedData, { merge: true });
   } catch (error) {
     console.error("Error updating user profile:", error);
     throw error;

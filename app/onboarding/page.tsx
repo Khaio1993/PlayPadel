@@ -110,17 +110,24 @@ export default function OnboardingPage() {
     try {
       const displayName = `${firstName} ${lastName}`.trim();
       
-      await updateUserProfile(user.uid, {
+      // Préparer les données en ne gardant que les valeurs non vides
+      const profileData: any = {
         firstName,
         lastName,
         displayName,
         dateOfBirth,
-        phoneNumber: phoneNumber || undefined,
         gender,
         level: parseFloat(level) || 0,
         preferredSide,
         onboardingCompleted: true,
-      });
+      };
+      
+      // Ajouter phoneNumber seulement s'il n'est pas vide
+      if (phoneNumber && phoneNumber.trim().length > 0) {
+        profileData.phoneNumber = phoneNumber.trim();
+      }
+      
+      await updateUserProfile(user.uid, profileData);
 
       // Rediriger vers la page d'accueil
       router.push("/home");
