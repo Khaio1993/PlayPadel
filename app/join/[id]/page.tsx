@@ -124,9 +124,8 @@ export default function JoinTournamentPage() {
         return;
       }
 
-      // Déterminer le genre de la place
-      const placeGender = currentTournament.players[placeIndex]?.gender || 
-        (placeIndex % 2 === 0 ? "M" : "F");
+      // Déterminer le genre de la place (alternance par défaut)
+      const placeGender: "M" | "F" = placeIndex % 2 === 0 ? "M" : "F";
 
       // Ajouter le joueur à la place
       const updatedPlayers = [...currentTournament.players];
