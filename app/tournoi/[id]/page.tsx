@@ -315,12 +315,72 @@ export default function TournamentDetailPage() {
     }
   };
 
-  const handleAddPlayer = () => {
+  // Obtenir toutes les places (vides et occupées) pour l'affichage
+  const getAllPlaces = () => {
+    if (!tournament) return [];
+    
+    const maxPlayers = tournament.maxPlayers || tournament.players.length;
+    const allPlaces: Array<{ index: number; player: Player | null; gender: "M" | "F" }> = [];
+    
+    // Créer un tableau de toutes les places
+    for (let i = 0; i < maxPlayers; i++) {
+      // Trouver le joueur qui occupe cette place par placeIndex
+      const existingPlayer = tournament.players.find((p) => {
+        if (p.placeIndex !== undefined) {
+          return p.placeIndex === i;
+        }
+        // Rétrocompatibilité : si pas de placeIndex, utiliser l'index dans le tableau
+        const hasPlaceIndexDefined = tournament.players.some((p2) => p2.placeIndex !== undefined);
+        if (!hasPlaceIndexDefined) {
+          return tournament.players.indexOf(p) === i;
+        }
+        return false;
+      }) || null;
+      
+      allPlaces.push({
+        index: i,
+        player: existingPlayer,
+        gender: existingPlayer?.gender || (i % 2 === 0 ? "M" : "F"), // Alternance par défaut
+      });
+    }
+    
+    return allPlaces;
+  };
+
+  const handleAddPlace = () => {
     if (!tournament) return;
+    
+    const currentMaxPlayers = tournament.maxPlayers || tournament.players.length;
+    if (currentMaxPlayers >= 12) {
+      alert("Maximum 12 places autorisées");
+      return;
+    }
+    
+    // Augmenter maxPlayers
+    setTournament({
+      ...tournament,
+      maxPlayers: currentMaxPlayers + 1,
+    });
+  };
+
+  const handleAddPlayer = (placeIndex: number) => {
+    if (!tournament) return;
+    
+    // Vérifier si la place est déjà occupée
+    const placeAlreadyTaken = tournament.players.some(
+      (p) => p.placeIndex === placeIndex || (p.placeIndex === undefined && tournament.players.indexOf(p) === placeIndex)
+    );
+    
+    if (placeAlreadyTaken) {
+      return; // Ne rien faire si la place est déjà prise
+    }
+    
+    const placeGender: "M" | "F" = placeIndex % 2 === 0 ? "M" : "F";
     const newPlayer: Player = {
       id: Date.now().toString(),
       name: "",
-      gender: tournament.players.length % 2 === 0 ? "M" : "F",
+      gender: placeGender,
+      placeIndex: placeIndex,
     };
     setTournament({
       ...tournament,
@@ -328,10 +388,14 @@ export default function TournamentDetailPage() {
     });
   };
 
+
   const handleRemovePlayer = async (playerId: string) => {
     if (!tournament) return;
-    if (tournament.players.length <= 4) {
-      alert("Minimum 4 joueurs requis");
+    
+    // Compter les joueurs avec nom (inscrits)
+    const namedPlayersCount = tournament.players.filter((p) => p.name.trim().length > 0).length;
+    if (namedPlayersCount <= 1) {
+      alert("Minimum 1 joueur inscrit requis");
       return;
     }
     
@@ -362,21 +426,67 @@ export default function TournamentDetailPage() {
 
   const handleUpdatePlayer = (playerId: string, playerData: { name: string; userId?: string; photoURL?: string; gender?: "M" | "F" }) => {
     if (!tournament) return;
-    setTournament({
-      ...tournament,
-      players: tournament.players.map((p) =>
-        p.id === playerId
-          ? { ...p, ...playerData }
-          : p
-      ),
-    });
+    
+    // Si le nom est vide, supprimer le joueur du tableau pour libérer la place
+    if (playerData.name.trim().length === 0 && !playerData.userId && !playerData.photoURL) {
+      setTournament({
+        ...tournament,
+        players: tournament.players.filter((p) => p.id !== playerId),
+      });
+    } else {
+      setTournament({
+        ...tournament,
+        players: tournament.players.map((p) =>
+          p.id === playerId
+            ? { ...p, ...playerData }
+            : p
+        ),
+      });
+    }
   };
 
   const handleSavePlayers = async () => {
     if (!tournament) return;
+    
+    // Validation
+    const namedPlayers = tournament.players.filter((p) => p.name.trim().length > 0);
+    if (namedPlayers.length < 4) {
+      alert("Minimum 4 joueurs avec nom requis");
+      return;
+    }
+    
+    // Vérifier les noms uniques
+    const playerNames = namedPlayers.map((p) => p.name.trim());
+    const uniqueNames = new Set(playerNames);
+    if (playerNames.length !== uniqueNames.size) {
+      alert("Les noms des joueurs doivent être uniques");
+      return;
+    }
+    
+    // Vérifier l'équilibre H/F si on a au moins 4 joueurs
+    if (namedPlayers.length >= 4) {
+      const namedMales = namedPlayers.filter((p) => p.gender === "M").length;
+      const namedFemales = namedPlayers.filter((p) => p.gender === "F").length;
+      if (namedMales !== namedFemales) {
+        alert("Le nombre d'hommes et de femmes doit être égal parmi les joueurs inscrits");
+        return;
+      }
+    }
+    
     setIsSaving(true);
     try {
-      await updateTournament(tournamentId, { players: tournament.players });
+      // Nettoyer les joueurs : ne garder que ceux avec un nom
+      // Les places vides sont gérées par maxPlayers, pas besoin de les stocker
+      const playersToSave = tournament.players.filter((p) => 
+        p.name.trim().length > 0
+      );
+      
+      await updateTournament(tournamentId, { 
+        players: playersToSave,
+        maxPlayers: tournament.maxPlayers,
+      });
+      setTournament({ ...tournament, players: playersToSave });
+      alert("Joueurs sauvegardés avec succès !");
     } catch (error) {
       console.error("Error saving players:", error);
       alert("Erreur lors de la sauvegarde des joueurs");
@@ -716,113 +826,173 @@ export default function TournamentDetailPage() {
               <div>
                 <div className="mb-4 flex items-center justify-between">
                   <h2 className="text-xl font-semibold text-foreground">
-                    Joueurs ({tournament.players.length}/{tournament.maxPlayers || tournament.players.length})
+                    Joueurs ({tournament.players.filter((p) => p.name.trim().length > 0).length}/{tournament.maxPlayers || tournament.players.length})
                   </h2>
-                  {tournament.players.length < (tournament.maxPlayers || 12) && (
+                  {(tournament.maxPlayers || tournament.players.length) < 12 && (
                     <button
-                      onClick={handleAddPlayer}
+                      onClick={handleAddPlace}
                       className="flex items-center gap-2 rounded-lg bg-primary/10 px-3 py-2 text-sm font-medium text-primary transition-all hover:bg-primary/20"
                     >
                       <Plus className="h-4 w-4" />
-                      Ajouter
+                      Ajouter une place
                     </button>
                   )}
                 </div>
 
                 <div className="space-y-3 mb-4">
-                  {tournament.players.map((player, index) => (
-                    <div
-                      key={player.id}
-                      className="flex items-center gap-3 rounded-xl bg-card p-3 shadow-sm"
-                    >
-                      <span className="text-sm font-medium text-muted-foreground">
-                        {index + 1}.
-                      </span>
-                      <div className="flex flex-1 items-center gap-2">
-                        {player.photoURL && (
-                          <Image
-                            src={player.photoURL}
-                            alt={player.name}
-                            width={24}
-                            height={24}
-                            className="h-6 w-6 rounded-full"
-                          />
-                        )}
-                        <PlayerSelector
-                          value={player.name}
-                          onChange={(selectedPlayer) =>
-                            handleUpdatePlayer(player.id, {
-                              name: selectedPlayer.name,
-                              userId: selectedPlayer.userId,
-                              photoURL: selectedPlayer.photoURL,
-                            })
-                          }
-                          onRemove={() =>
-                            handleUpdatePlayer(player.id, { name: "", userId: undefined, photoURL: undefined })
-                          }
-                          gender={player.gender}
-                          placeholder={`Joueur ${index + 1}`}
-                          currentPlayerId={player.userId}
-                          usedUserIds={tournament.players
-                            .filter((p) => p.id !== player.id && p.userId)
-                            .map((p) => p.userId!)}
-                        />
-                      </div>
-                      {/* Toggle M/F */}
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`text-sm font-semibold ${
-                            player.gender === "M"
-                              ? "text-primary"
-                              : "text-muted-foreground"
-                          }`}
-                        >
-                          M
+                  {getAllPlaces().map((place) => {
+                    const player = place.player;
+                    const isOccupied = player !== null;
+                    
+                    return (
+                      <div
+                        key={place.index}
+                        className="flex items-center gap-3 rounded-xl bg-card p-3 shadow-sm"
+                      >
+                        <span className="text-sm font-medium text-muted-foreground">
+                          {place.index + 1}.
                         </span>
-                        <button
-                          onClick={() =>
-                            handleUpdatePlayer(player.id, {
-                              name: player.name,
-                              gender: player.gender === "M" ? "F" : "M",
-                            })
-                          }
-                          className={`relative h-7 w-12 rounded-full transition-colors ${
-                            player.gender === "M" ? "bg-primary" : "bg-[#e05d38]"
-                          }`}
-                        >
+                        <div className="flex flex-1 items-center gap-2">
+                          {isOccupied && player.photoURL && (
+                            <Image
+                              src={player.photoURL}
+                              alt={player.name}
+                              width={24}
+                              height={24}
+                              className="h-6 w-6 rounded-full"
+                            />
+                          )}
+                          {isOccupied ? (
+                            <PlayerSelector
+                              value={player.name}
+                              onChange={(selectedPlayer) =>
+                                handleUpdatePlayer(player.id, {
+                                  name: selectedPlayer.name,
+                                  userId: selectedPlayer.userId,
+                                  photoURL: selectedPlayer.photoURL,
+                                })
+                              }
+                              onRemove={() =>
+                                handleUpdatePlayer(player.id, { name: "", userId: undefined, photoURL: undefined })
+                              }
+                              gender={player.gender}
+                              placeholder={`Joueur ${place.index + 1}`}
+                              currentPlayerId={player.userId}
+                              usedUserIds={tournament.players
+                                .filter((p) => p.id !== player.id && p.userId)
+                                .map((p) => p.userId!)}
+                            />
+                          ) : (
+                            <div className="flex-1">
+                              <button
+                                onClick={() => handleAddPlayer(place.index)}
+                                className="w-full rounded-lg border-2 border-dashed border-border bg-background px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
+                              >
+                                Place disponible ({place.gender === "M" ? "Homme" : "Femme"})
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                        {/* Toggle M/F - seulement si la place est occupée */}
+                        {isOccupied ? (
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`text-sm font-semibold ${
+                                player.gender === "M"
+                                  ? "text-primary"
+                                  : "text-muted-foreground"
+                              }`}
+                            >
+                              M
+                            </span>
+                            <button
+                              onClick={() =>
+                                handleUpdatePlayer(player.id, {
+                                  name: player.name,
+                                  gender: player.gender === "M" ? "F" : "M",
+                                })
+                              }
+                              className={`relative h-7 w-12 rounded-full transition-colors ${
+                                player.gender === "M" ? "bg-primary" : "bg-[#e05d38]"
+                              }`}
+                            >
+                              <div
+                                className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-md transition-transform ${
+                                  player.gender === "M"
+                                    ? "left-1"
+                                    : "left-6"
+                                }`}
+                              />
+                            </button>
+                            <span
+                              className={`text-sm font-semibold ${
+                                player.gender === "F"
+                                  ? "text-[#e05d38]"
+                                  : "text-muted-foreground"
+                              }`}
+                            >
+                              F
+                            </span>
+                          </div>
+                        ) : (
                           <div
-                            className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-md transition-transform ${
-                              player.gender === "M"
-                                ? "left-1"
-                                : "left-6"
+                            className={`h-6 w-6 rounded-full ${
+                              place.gender === "M" ? "bg-primary/30" : "bg-[#e05d38]/30"
                             }`}
                           />
-                        </button>
-                        <span
-                          className={`text-sm font-semibold ${
-                            player.gender === "F"
-                              ? "text-[#e05d38]"
-                              : "text-muted-foreground"
-                          }`}
-                        >
-                          F
-                        </span>
+                        )}
+                        {/* Remove button - seulement si la place est occupée */}
+                        {isOccupied && (
+                          <button
+                            onClick={() => handleRemovePlayer(player.id)}
+                            disabled={tournament.players.filter((p) => p.name.trim().length > 0).length <= 1}
+                            className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
+                              tournament.players.filter((p) => p.name.trim().length > 0).length <= 1
+                                ? "cursor-not-allowed bg-muted text-muted-foreground/50"
+                                : "bg-muted text-muted-foreground hover:bg-destructive hover:text-destructive-foreground"
+                            }`}
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
-                      {/* Remove button */}
-                      <button
-                        onClick={() => handleRemovePlayer(player.id)}
-                        disabled={tournament.players.length <= 4}
-                        className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
-                          tournament.players.length <= 4
-                            ? "cursor-not-allowed bg-muted text-muted-foreground/50"
-                            : "bg-muted text-muted-foreground hover:bg-destructive hover:text-destructive-foreground"
-                        }`}
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
+
+                {/* Players Info - comme dans la page de création */}
+                {(() => {
+                  const namedPlayers = tournament.players.filter((p) => p.name.trim().length > 0);
+                  const maleCount = namedPlayers.filter((p) => p.gender === "M").length;
+                  const femaleCount = namedPlayers.filter((p) => p.gender === "F").length;
+                  const isBalanced = maleCount === femaleCount;
+                  const maxPlayers = tournament.maxPlayers || tournament.players.length;
+                  
+                  return (
+                    <div className="mt-3 rounded-lg bg-muted/50 p-3 mb-4">
+                      <p className="text-xs text-muted-foreground">
+                        {maxPlayers} places disponibles. Minimum 4 joueurs avec noms uniques, hommes et femmes en nombre égal.
+                      </p>
+                      <div className="mt-2 flex gap-4 text-xs">
+                        <span className="text-primary">
+                          ♂ Hommes: {maleCount}
+                        </span>
+                        <span className="text-[#e05d38]">
+                          ♀ Femmes: {femaleCount}
+                        </span>
+                        {namedPlayers.length >= 4 && !isBalanced && (
+                          <span className="text-destructive">⚠ Non équilibré</span>
+                        )}
+                        {namedPlayers.length >= 4 && isBalanced && (
+                          <span className="text-green-500">✓ Équilibré</span>
+                        )}
+                      </div>
+                      <div className="mt-2 text-xs font-medium text-foreground">
+                        Inscrits: {namedPlayers.length}/{maxPlayers}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 <button
                   onClick={handleSavePlayers}

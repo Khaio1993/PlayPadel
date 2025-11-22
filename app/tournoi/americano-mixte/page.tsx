@@ -165,19 +165,27 @@ export default function AmericanoMixtePage() {
         displayName: user.displayName || "User",
         photoURL: user.photoURL || undefined,
       });
-      // Préparer les données du tournoi
-      const tournamentData = {
-        name: tournamentName.trim(),
-        location: location.trim(),
-        time: time || new Date().toISOString(),
-        description: description.trim(),
-        players: players.filter((p) => p.name.trim().length > 0), // Seulement les joueurs avec nom
-        courts: courts.length > 0 ? courts : [{ id: "default", name: "Court 1" }],
-        type: "americano-mixte" as const,
-        status: "draft" as const,
-        userId: user.uid,
-        maxPlayers: players.length, // Nombre total de places disponibles
-      };
+              // Préparer les données du tournoi
+              // Assigner placeIndex à chaque joueur basé sur sa position initiale
+              const playersWithPlaceIndex = players
+                .filter((p) => p.name.trim().length > 0) // Seulement les joueurs avec nom
+                .map((p, index) => ({
+                  ...p,
+                  placeIndex: players.indexOf(p), // Index dans le tableau original (avant filtrage)
+                }));
+              
+              const tournamentData = {
+                name: tournamentName.trim(),
+                location: location.trim(),
+                time: time || new Date().toISOString(),
+                description: description.trim(),
+                players: playersWithPlaceIndex,
+                courts: courts.length > 0 ? courts : [{ id: "default", name: "Court 1" }],
+                type: "americano-mixte" as const,
+                status: "draft" as const,
+                userId: user.uid,
+                maxPlayers: players.length, // Nombre total de places disponibles
+              };
 
       // Créer le tournoi dans Firebase
       const tournamentId = await createTournament(tournamentData);

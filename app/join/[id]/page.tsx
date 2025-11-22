@@ -9,7 +9,7 @@ import { getMatchesByTournament } from "@/lib/matches";
 import { Tournament, Player, Match } from "@/lib/types";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { createOrUpdateUserProfile } from "@/lib/users";
+import { createOrUpdateUserProfile, getUserById } from "@/lib/users";
 import { Loader2, MapPin, Clock, Users, FileText, Trophy, Image as ImageIcon, Award } from "lucide-react";
 
 export default function JoinTournamentPage() {
@@ -25,6 +25,7 @@ export default function JoinTournamentPage() {
   const [selectedPlace, setSelectedPlace] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"joueurs" | "matchs" | "results" | "media">("joueurs");
+  const [userGender, setUserGender] = useState<"M" | "F" | null>(null);
 
   // Écouter les changements en temps réel du tournoi
   useEffect(() => {
@@ -75,18 +76,35 @@ export default function JoinTournamentPage() {
     }
   }, [authLoading, user, tournamentId, router]);
 
+  // Charger le genre de l'utilisateur depuis son profil
+  useEffect(() => {
+    const loadUserGender = async () => {
+      if (!user) return;
+      
+      try {
+        const userProfile = await getUserById(user.uid);
+        if (userProfile?.gender) {
+          setUserGender(userProfile.gender);
+        }
+      } catch (error) {
+        console.error("Error loading user gender:", error);
+      }
+    };
+
+    if (user) {
+      loadUserGender();
+    }
+  }, [user]);
+
   // Vérifier si l'utilisateur est déjà dans le tournoi
+  // Vérification stricte : seulement si userId existe ET correspond à l'UID actuel
   const isUserAlreadyInTournament = user && tournament?.players.some(
-    (p) => p.userId === user.uid
+    (p) => p.userId && p.userId === user.uid
   );
 
   // Vérifier si l'utilisateur est le propriétaire du tournoi
   const isOwner = user && tournament?.userId === user.uid;
 
-  // Obtenir le joueur de l'utilisateur actuel
-  const currentUserPlayer = user && tournament?.players.find(
-    (p) => p.userId === user.uid
-  );
 
   // Obtenir les places disponibles
   const getAvailablePlaces = () => {
@@ -97,7 +115,21 @@ export default function JoinTournamentPage() {
     
     // Créer un tableau de toutes les places
     for (let i = 0; i < maxPlayers; i++) {
-      const existingPlayer = tournament.players[i] || null;
+      // Trouver le joueur qui occupe cette place par placeIndex
+      // Si placeIndex n'est pas défini, utiliser l'index dans le tableau (rétrocompatibilité)
+      const existingPlayer = tournament.players.find((p) => {
+        if (p.placeIndex !== undefined) {
+          return p.placeIndex === i;
+        }
+        // Rétrocompatibilité : si pas de placeIndex, utiliser l'index dans le tableau
+        // mais seulement si c'est cohérent (pas de placeIndex défini ailleurs)
+        const hasPlaceIndexDefined = tournament.players.some((p2) => p2.placeIndex !== undefined);
+        if (!hasPlaceIndexDefined) {
+          return tournament.players.indexOf(p) === i;
+        }
+        return false;
+      }) || null;
+      
       availablePlaces.push({
         index: i,
         player: existingPlayer,
@@ -131,15 +163,9 @@ export default function JoinTournamentPage() {
       }
 
       // Vérifier si l'utilisateur est déjà dans le tournoi (double vérification)
-      if (currentTournament.players.some((p) => p.userId === user.uid)) {
+      // Vérification stricte : seulement si userId existe ET correspond à l'UID actuel
+      if (currentTournament.players.some((p) => p.userId && p.userId === user.uid)) {
         setError("Vous êtes déjà inscrit à ce tournoi. Vous ne pouvez pas prendre une autre place.");
-        setIsJoining(false);
-        return;
-      }
-
-      // Vérifier si la place est toujours disponible
-      if (currentTournament.players[placeIndex]) {
-        setError("Cette place a été prise par quelqu'un d'autre");
         setIsJoining(false);
         return;
       }
@@ -147,34 +173,44 @@ export default function JoinTournamentPage() {
       // Déterminer le genre de la place (alternance par défaut)
       const placeGender: "M" | "F" = placeIndex % 2 === 0 ? "M" : "F";
 
-      // Ajouter le joueur à la place
-      const updatedPlayers: Player[] = currentTournament.players.map((p) => {
-        // Nettoyer les joueurs existants pour enlever les valeurs undefined
+      // Vérifier que le genre de la place correspond au genre de l'utilisateur
+      if (userGender && placeGender !== userGender) {
+        setError(`Cette place est réservée aux ${placeGender === "M" ? "hommes" : "femmes"}. Vous ne pouvez pas prendre cette place.`);
+        setIsJoining(false);
+        return;
+      }
+
+      // Vérifier si la place est déjà prise par un autre joueur
+      const placeAlreadyTaken = currentTournament.players.some(
+        (p) => p.placeIndex === placeIndex || (p.placeIndex === undefined && currentTournament.players.indexOf(p) === placeIndex)
+      );
+      
+      if (placeAlreadyTaken) {
+        setError("Cette place a été prise par quelqu'un d'autre");
+        setIsJoining(false);
+        return;
+      }
+
+      // Nettoyer les joueurs existants et s'assurer qu'ils ont un placeIndex
+      const updatedPlayers: Player[] = currentTournament.players.map((p, index) => {
         const cleanPlayer: Player = {
           id: p.id,
           name: p.name,
           gender: p.gender,
+          placeIndex: p.placeIndex !== undefined ? p.placeIndex : index, // Utiliser placeIndex existant ou index actuel
         };
         if (p.userId) cleanPlayer.userId = p.userId;
         if (p.photoURL) cleanPlayer.photoURL = p.photoURL;
         return cleanPlayer;
       });
       
-      // S'assurer que le tableau a la bonne taille
-      while (updatedPlayers.length <= placeIndex) {
-        updatedPlayers.push({
-          id: "",
-          name: "",
-          gender: updatedPlayers.length % 2 === 0 ? "M" : "F",
-        });
-      }
-      
-      // Créer le nouveau joueur
+      // Créer le nouveau joueur avec son placeIndex
       const newPlayer: Player = {
         id: Date.now().toString(),
         name: user.displayName || "User",
         gender: placeGender,
         userId: user.uid,
+        placeIndex: placeIndex, // Stocker l'index de la place
       };
       
       // Ajouter photoURL seulement si elle existe
@@ -182,7 +218,8 @@ export default function JoinTournamentPage() {
         newPlayer.photoURL = user.photoURL;
       }
       
-      updatedPlayers[placeIndex] = newPlayer;
+      // Ajouter le nouveau joueur au tableau (sans remplir les places intermédiaires)
+      updatedPlayers.push(newPlayer);
 
       // Mettre à jour le tournoi
       await updateTournament(tournamentId, {
@@ -219,7 +256,7 @@ export default function JoinTournamentPage() {
             onClick={() => router.push("/home")}
             className="rounded-full bg-primary px-6 py-3 font-semibold text-primary-foreground"
           >
-            Retour à l'accueil
+            Retour à l&apos;accueil
           </button>
         </div>
       </div>
@@ -339,20 +376,27 @@ export default function JoinTournamentPage() {
               </div>
             )}
             <div className="space-y-3">
-              {availablePlaces.map((place, index) => {
+              {availablePlaces.map((place) => {
                 const isOccupied = place.player !== null;
                 const isSelected = selectedPlace === place.index;
-                const isUserPlace = place.player?.userId === user?.uid;
+                // Vérification stricte : seulement si userId existe ET correspond à l'UID actuel
+                const isUserPlace = place.player?.userId && place.player.userId === user?.uid;
+                
+                // Vérifier si la place correspond au genre de l'utilisateur
+                const isGenderMatch = !userGender || place.gender === userGender;
+                const canSelect = !isOccupied && isGenderMatch;
 
                 return (
                   <div
                     key={place.index}
                     className={`flex items-center gap-3 rounded-xl p-4 shadow-sm transition-all ${
                       isOccupied
-                        ? "bg-muted/50 cursor-not-allowed"
-                        : "bg-card cursor-pointer hover:shadow-md"
+                        ? "bg-muted/50 cursor-not-allowed opacity-60"
+                        : isGenderMatch
+                        ? "bg-card cursor-pointer hover:shadow-md hover:bg-card/80 active:scale-[0.98]"
+                        : "bg-muted/30 cursor-not-allowed opacity-50"
                     } ${isSelected ? "ring-2 ring-primary" : ""}`}
-                    onClick={() => !isOccupied && setSelectedPlace(place.index)}
+                    onClick={() => canSelect && setSelectedPlace(place.index)}
                   >
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
                       {place.index + 1}
@@ -377,9 +421,16 @@ export default function JoinTournamentPage() {
                           )}
                         </div>
                       ) : (
-                        <span className="text-sm text-muted-foreground">
-                          Place disponible ({place.gender === "M" ? "Homme" : "Femme"})
-                        </span>
+                        <div className="flex flex-col">
+                          <span className={`text-sm ${isGenderMatch ? "text-foreground font-medium" : "text-muted-foreground"}`}>
+                            Place disponible ({place.gender === "M" ? "Homme" : "Femme"})
+                          </span>
+                          {!isGenderMatch && userGender && (
+                            <span className="text-xs text-muted-foreground mt-0.5">
+                              Réservée aux {place.gender === "M" ? "hommes" : "femmes"}
+                            </span>
+                          )}
+                        </div>
                       )}
                     </div>
                     <div
@@ -453,7 +504,10 @@ export default function JoinTournamentPage() {
                   </h2>
                   <div className="space-y-2">
                     {tournament.players.map((player, index) => {
-                      const isCurrentUser = user && player.userId === user.uid;
+                      // Vérification stricte : seulement si userId existe ET correspond à l'UID actuel
+                      const isCurrentUser = user && 
+                        player.userId && 
+                        player.userId === user.uid;
                       // Créer une clé unique en combinant l'index et l'ID du joueur
                       const uniqueKey = player.userId 
                         ? `player-${player.userId}-${index}` 

@@ -8,6 +8,7 @@ export interface Player {
   gender: Gender;
   userId?: string; // ID de l'utilisateur Firebase si sélectionné depuis un profil
   photoURL?: string; // Photo de profil si disponible
+  placeIndex?: number; // Index de la place dans le tournoi (0-based)
 }
 
 export interface Court {
