@@ -17,10 +17,12 @@ import {
   Plus,
   Loader2,
   Globe,
-  Lock
+  Lock,
+  Trash2,
+  AlertTriangle
 } from "lucide-react";
 import { ProtectedRoute } from "../../components/ProtectedRoute";
-import { getTournamentById, updateTournament } from "@/lib/tournaments";
+import { getTournamentById, updateTournament, deleteTournament } from "@/lib/tournaments";
 import { getMatchesByTournament, createMatches, updateMatch, deleteMatchesByTournament } from "@/lib/matches";
 import { generateMatches } from "@/lib/matchGenerator";
 import { Tournament, Match, Player } from "@/lib/types";
@@ -46,6 +48,8 @@ export default function TournamentDetailPage() {
   const [editingTime, setEditingTime] = useState(false);
   const [tempLocation, setTempLocation] = useState("");
   const [tempTime, setTempTime] = useState("");
+  const [showDeleteDrawer, setShowDeleteDrawer] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const saveTimeouts = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
   useEffect(() => {
@@ -288,6 +292,26 @@ export default function TournamentDetailPage() {
       alert("Erreur lors de la mise à jour");
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleDeleteTournament = async () => {
+    if (!tournament) return;
+    
+    setIsDeleting(true);
+    try {
+      // Supprimer d'abord tous les matchs associés
+      await deleteMatchesByTournament(tournamentId);
+      
+      // Ensuite supprimer le tournoi
+      await deleteTournament(tournamentId);
+      
+      // Rediriger vers la page d'accueil
+      router.push("/home");
+    } catch (error) {
+      console.error("Error deleting tournament:", error);
+      alert("Erreur lors de la suppression du tournoi");
+      setIsDeleting(false);
     }
   };
 
@@ -665,6 +689,25 @@ export default function TournamentDetailPage() {
                     </div>
                   </div>
                 </div>
+
+                {/* Zone de danger - Supprimer le tournoi */}
+                <div className="rounded-xl bg-destructive/10 border border-destructive/20 p-6 shadow-sm">
+                  <h3 className="text-lg font-semibold text-destructive mb-4">
+                    Zone de danger
+                  </h3>
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      La suppression du tournoi est irréversible. Tous les matchs générés seront également supprimés.
+                    </p>
+                    <button
+                      onClick={() => setShowDeleteDrawer(true)}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-destructive bg-destructive/10 px-4 py-3 font-medium text-destructive transition-all hover:bg-destructive/20 active:scale-95"
+                    >
+                      <Trash2 className="h-5 w-5" />
+                      Supprimer le tournoi
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -943,6 +986,76 @@ export default function TournamentDetailPage() {
             )}
           </div>
         </main>
+
+        {/* Drawer de confirmation de suppression */}
+        {showDeleteDrawer && (
+          <>
+            {/* Overlay */}
+            <div
+              className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm transition-opacity"
+              onClick={() => !isDeleting && setShowDeleteDrawer(false)}
+            />
+            
+            {/* Drawer */}
+            <div className="fixed bottom-0 left-0 right-0 z-50 mx-auto max-w-lg animate-in slide-in-from-bottom duration-300">
+              <div className="rounded-t-3xl bg-card border-t border-l border-r border-border shadow-2xl">
+                {/* Handle bar */}
+                <div className="flex justify-center pt-3 pb-2">
+                  <div className="h-1.5 w-12 rounded-full bg-muted-foreground/30" />
+                </div>
+
+                {/* Content */}
+                <div className="px-6 pb-8">
+                  <div className="mb-6 flex items-center justify-center">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10">
+                      <AlertTriangle className="h-8 w-8 text-destructive" />
+                    </div>
+                  </div>
+
+                  <h3 className="mb-2 text-center text-2xl font-bold text-foreground">
+                    Supprimer le tournoi
+                  </h3>
+                  
+                  <p className="mb-1 text-center text-sm text-muted-foreground">
+                    Cette action est <span className="font-semibold text-destructive">irréversible</span>.
+                  </p>
+                  
+                  <p className="mb-6 text-center text-sm text-muted-foreground">
+                    Le tournoi &quot;{tournament?.name}&quot; et tous les matchs générés seront définitivement supprimés.
+                  </p>
+
+                  <div className="space-y-3">
+                    <button
+                      onClick={handleDeleteTournament}
+                      disabled={isDeleting}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-destructive px-6 py-4 font-semibold text-destructive-foreground transition-all hover:bg-destructive/90 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isDeleting ? (
+                        <>
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                          Suppression en cours...
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 className="h-5 w-5" />
+                          Oui, supprimer définitivement
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      onClick={() => setShowDeleteDrawer(false)}
+                      disabled={isDeleting}
+                      className="w-full rounded-xl border-2 border-border bg-background px-6 py-4 font-semibold text-foreground transition-all hover:bg-muted active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Annuler
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </ProtectedRoute>
   );
