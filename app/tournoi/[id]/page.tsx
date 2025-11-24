@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo, ChangeEvent } from "react";
 import { 
   ArrowLeft, 
   Trophy, 
@@ -19,15 +19,20 @@ import {
   Globe,
   Lock,
   Trash2,
-  AlertTriangle
+  AlertTriangle,
+  CheckCircle2,
+  AlertCircle,
+  Info as InfoIcon,
+  Award
 } from "lucide-react";
 import { ProtectedRoute } from "../../components/ProtectedRoute";
 import { getTournamentById, updateTournament, deleteTournament } from "@/lib/tournaments";
 import { getMatchesByTournament, createMatches, updateMatch, deleteMatchesByTournament } from "@/lib/matches";
 import { generateMatches } from "@/lib/matchGenerator";
-import { Tournament, Match, Player } from "@/lib/types";
+import { Tournament, Match, Player, TournamentMedia } from "@/lib/types";
 import { useAuth } from "../../contexts/AuthContext";
 import { PlayerSelector } from "../../components/PlayerSelector";
+import { uploadTournamentMedia, deleteTournamentMediaFile } from "@/lib/storage";
 
 export default function TournamentDetailPage() {
   const params = useParams();
@@ -40,8 +45,9 @@ export default function TournamentDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isValidatingScores, setIsValidatingScores] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [activeTab, setActiveTab] = useState<"settings" | "joueurs" | "matchs" | "media">("settings");
+  const [activeTab, setActiveTab] = useState<"settings" | "joueurs" | "matchs" | "results" | "media">("settings");
   const [editingTitle, setEditingTitle] = useState(false);
   const [tempTitle, setTempTitle] = useState("");
   const [editingLocation, setEditingLocation] = useState(false);
@@ -50,12 +56,52 @@ export default function TournamentDetailPage() {
   const [tempTime, setTempTime] = useState("");
   const [showDeleteDrawer, setShowDeleteDrawer] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" | "warning" } | null>(null);
   const saveTimeouts = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [isRedirecting, setIsRedirecting] = useState(false);
+  const mediaInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
+  const [mediaDeletingId, setMediaDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     loadTournament();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tournamentId]);
+
+  useEffect(() => {
+    if (!isLoading && tournament && user && user.uid !== tournament.userId) {
+      setIsRedirecting(true);
+      router.replace(`/join/${tournamentId}`);
+    }
+  }, [isLoading, tournament, user, router, tournamentId]);
+
+  const dismissToast = useCallback(() => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+      toastTimeoutRef.current = null;
+    }
+    setToast(null);
+  }, []);
+
+  const showToast = useCallback((message: string, type: "success" | "error" | "info" | "warning" = "info", duration = 4000) => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+    }
+    setToast({ message, type });
+    toastTimeoutRef.current = setTimeout(() => {
+      dismissToast();
+    }, duration);
+  }, [dismissToast]);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+        toastTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   const loadTournament = async () => {
     try {
@@ -105,40 +151,7 @@ export default function TournamentDetailPage() {
       setTournament({ ...tournament, status: "active" });
     } catch (error) {
       console.error("Error generating matches:", error);
-      alert("Erreur lors de la génération des matchs");
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  const handleRegenerateMatches = async () => {
-    if (!tournament) return;
-    
-    if (!confirm("Êtes-vous sûr de vouloir régénérer les matchs ? Tous les scores actuels seront perdus.")) {
-      return;
-    }
-
-    try {
-      setIsGenerating(true);
-      
-      // Supprimer les anciens matchs
-      await deleteMatchesByTournament(tournamentId);
-      
-      // Générer les nouveaux matchs
-      const generatedMatches = generateMatches(tournament.players, tournament.courts);
-      const matchesWithTournamentId = generatedMatches.map((match) => ({
-        ...match,
-        tournamentId: tournamentId,
-      }));
-
-      await createMatches(matchesWithTournamentId);
-      
-      // Recharger les matchs
-      const updatedMatches = await getMatchesByTournament(tournamentId);
-      setMatches(updatedMatches);
-    } catch (error) {
-      console.error("Error regenerating matches:", error);
-      alert("Erreur lors de la régénération des matchs");
+      showToast("Erreur lors de la génération des matchs", "error");
     } finally {
       setIsGenerating(false);
     }
@@ -181,8 +194,23 @@ export default function TournamentDetailPage() {
     };
   }, []);
 
+  const playersById = useMemo(() => {
+    const map = new Map<string, Player>();
+    tournament?.players.forEach((player) => {
+      map.set(player.id, player);
+    });
+    return map;
+  }, [tournament]);
+
+  const mediaItems = useMemo(() => {
+    if (!tournament?.media) return [];
+    return [...tournament.media].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }, [tournament?.media]);
+
   const getPlayerName = (playerId: string): string => {
-    return tournament?.players.find((p) => p.id === playerId)?.name || "Inconnu";
+    return playersById.get(playerId)?.name || "Inconnu";
   };
 
   const getCourtName = (courtId: string): string => {
@@ -191,6 +219,121 @@ export default function TournamentDetailPage() {
 
   const getMatchesByRound = (round: number): Match[] => {
     return matches.filter((m) => m.round === round);
+  };
+
+  const leaderboard = useMemo(() => {
+    if (!tournament || matches.length === 0) return [];
+
+    const stats = new Map<
+      string,
+      {
+        player: Player;
+        points: number;
+        matchesPlayed: number;
+      }
+    >();
+
+    const addScore = (playerId: string, points: number, counted: boolean) => {
+      const player = playersById.get(playerId);
+      if (!player) return;
+      const entry = stats.get(playerId) || { player, points: 0, matchesPlayed: 0 };
+      entry.points += points;
+      if (counted) {
+        entry.matchesPlayed += 1;
+      }
+      stats.set(playerId, entry);
+    };
+
+    matches.forEach((match) => {
+      if (!match.score) return;
+      const { team1, team2, score } = match;
+      team1.forEach((playerId) => addScore(playerId, score.team1 || 0, true));
+      team2.forEach((playerId) => addScore(playerId, score.team2 || 0, true));
+    });
+
+    tournament.players.forEach((player) => {
+      if (!stats.has(player.id)) {
+        stats.set(player.id, { player, points: 0, matchesPlayed: 0 });
+      }
+    });
+
+    return Array.from(stats.values()).sort((a, b) => {
+      if (b.points === a.points) {
+        return a.player.name.localeCompare(b.player.name);
+      }
+      return b.points - a.points;
+    });
+  }, [matches, playersById, tournament]);
+
+  const hasIncompleteScores = useMemo(
+    () => matches.some((match) => !match.score),
+    [matches]
+  );
+
+  const handleOpenMediaPicker = () => {
+    mediaInputRef.current?.click();
+  };
+
+  const handleMediaUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    if (!tournament || !user) return;
+    const files = event.target.files ? Array.from(event.target.files) : [];
+    event.target.value = "";
+    if (files.length === 0) return;
+
+    setIsUploadingMedia(true);
+    try {
+      const uploads: TournamentMedia[] = [];
+      for (const file of files) {
+        if (!file.type.startsWith("image/")) {
+          showToast("Seules les images sont supportées", "warning");
+          continue;
+        }
+        if (file.size > 10 * 1024 * 1024) {
+          showToast("Taille maximale 10MB par image", "warning");
+          continue;
+        }
+        const url = await uploadTournamentMedia(tournamentId, file);
+        uploads.push({
+          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          url,
+          uploadedBy: user.uid,
+          uploadedByName: user.displayName || user.email || "Organisateur",
+          createdAt: new Date().toISOString(),
+          likes: [],
+        });
+      }
+
+      if (uploads.length === 0) {
+        return;
+      }
+
+      const updatedMedia = [...(tournament.media || []), ...uploads];
+      await updateTournament(tournamentId, { media: updatedMedia });
+      setTournament({ ...tournament, media: updatedMedia });
+      showToast("Photos ajoutées au tournoi !", "success");
+    } catch (error) {
+      console.error("Error uploading media:", error);
+      showToast("Erreur lors de l'upload des médias", "error");
+    } finally {
+      setIsUploadingMedia(false);
+    }
+  };
+
+  const handleDeleteMedia = async (media: TournamentMedia) => {
+    if (!tournament) return;
+    try {
+      setMediaDeletingId(media.id);
+      await deleteTournamentMediaFile(media.url);
+      const updatedMedia = (tournament.media || []).filter((item) => item.id !== media.id);
+      await updateTournament(tournamentId, { media: updatedMedia });
+      setTournament({ ...tournament, media: updatedMedia });
+      showToast("Photo supprimée", "success");
+    } catch (error) {
+      console.error("Error deleting media:", error);
+      showToast("Erreur lors de la suppression", "error");
+    } finally {
+      setMediaDeletingId(null);
+    }
   };
 
   const rounds = matches.length > 0 ? Math.max(...matches.map((m) => m.round)) : 0;
@@ -236,7 +379,7 @@ export default function TournamentDetailPage() {
       setEditingLocation(false);
     } catch (error) {
       console.error("Error saving location:", error);
-      alert("Erreur lors de la sauvegarde du lieu");
+      showToast("Erreur lors de la sauvegarde du lieu", "error");
     } finally {
       setIsSaving(false);
     }
@@ -251,7 +394,7 @@ export default function TournamentDetailPage() {
       setEditingTime(false);
     } catch (error) {
       console.error("Error saving time:", error);
-      alert("Erreur lors de la sauvegarde de la date");
+      showToast("Erreur lors de la sauvegarde de la date", "error");
     } finally {
       setIsSaving(false);
     }
@@ -273,7 +416,7 @@ export default function TournamentDetailPage() {
       setEditingTitle(false);
     } catch (error) {
       console.error("Error saving title:", error);
-      alert("Erreur lors de la sauvegarde du nom");
+      showToast("Erreur lors de la sauvegarde du nom", "error");
       setTempTitle(tournament.name);
     } finally {
       setIsSaving(false);
@@ -289,7 +432,7 @@ export default function TournamentDetailPage() {
       setTournament({ ...tournament, isPublic: newIsPublic });
     } catch (error) {
       console.error("Error toggling public:", error);
-      alert("Erreur lors de la mise à jour");
+      showToast("Erreur lors de la mise à jour de la visibilité", "error");
     } finally {
       setIsSaving(false);
     }
@@ -310,9 +453,25 @@ export default function TournamentDetailPage() {
       router.push("/home");
     } catch (error) {
       console.error("Error deleting tournament:", error);
-      alert("Erreur lors de la suppression du tournoi");
+      showToast("Erreur lors de la suppression du tournoi", "error");
       setIsDeleting(false);
     }
+  };
+
+  const findPlayerAtPlace = (placeIndex: number, sourceTournament: Tournament | null = tournament): Player | null => {
+    if (!sourceTournament) return null;
+    const hasPlaceIndexDefined = sourceTournament.players.some((p) => p.placeIndex !== undefined);
+    return (
+      sourceTournament.players.find((p) => {
+        if (p.placeIndex !== undefined) {
+          return p.placeIndex === placeIndex;
+        }
+        if (!hasPlaceIndexDefined) {
+          return sourceTournament.players.indexOf(p) === placeIndex;
+        }
+        return false;
+      }) || null
+    );
   };
 
   // Obtenir toutes les places (vides et occupées) pour l'affichage
@@ -322,25 +481,13 @@ export default function TournamentDetailPage() {
     const maxPlayers = tournament.maxPlayers || tournament.players.length;
     const allPlaces: Array<{ index: number; player: Player | null; gender: "M" | "F" }> = [];
     
-    // Créer un tableau de toutes les places
     for (let i = 0; i < maxPlayers; i++) {
-      // Trouver le joueur qui occupe cette place par placeIndex
-      const existingPlayer = tournament.players.find((p) => {
-        if (p.placeIndex !== undefined) {
-          return p.placeIndex === i;
-        }
-        // Rétrocompatibilité : si pas de placeIndex, utiliser l'index dans le tableau
-        const hasPlaceIndexDefined = tournament.players.some((p2) => p2.placeIndex !== undefined);
-        if (!hasPlaceIndexDefined) {
-          return tournament.players.indexOf(p) === i;
-        }
-        return false;
-      }) || null;
+      const existingPlayer = findPlayerAtPlace(i);
       
       allPlaces.push({
         index: i,
         player: existingPlayer,
-        gender: existingPlayer?.gender || (i % 2 === 0 ? "M" : "F"), // Alternance par défaut
+        gender: existingPlayer?.gender || (i % 2 === 0 ? "M" : "F"),
       });
     }
     
@@ -352,7 +499,7 @@ export default function TournamentDetailPage() {
     
     const currentMaxPlayers = tournament.maxPlayers || tournament.players.length;
     if (currentMaxPlayers >= 12) {
-      alert("Maximum 12 places autorisées");
+      showToast("Maximum 12 places autorisées", "warning");
       return;
     }
     
@@ -366,11 +513,7 @@ export default function TournamentDetailPage() {
   const handleAddPlayer = (placeIndex: number) => {
     if (!tournament) return;
     
-    // Vérifier si la place est déjà occupée
-    const placeAlreadyTaken = tournament.players.some(
-      (p) => p.placeIndex === placeIndex || (p.placeIndex === undefined && tournament.players.indexOf(p) === placeIndex)
-    );
-    
+    const placeAlreadyTaken = findPlayerAtPlace(placeIndex);
     if (placeAlreadyTaken) {
       return; // Ne rien faire si la place est déjà prise
     }
@@ -382,46 +525,58 @@ export default function TournamentDetailPage() {
       gender: placeGender,
       placeIndex: placeIndex,
     };
-    setTournament({
-      ...tournament,
-      players: [...tournament.players, newPlayer],
+    setTournament((prevTournament) => {
+      if (!prevTournament) return prevTournament;
+      return {
+        ...prevTournament,
+        players: [...prevTournament.players, newPlayer],
+      };
     });
   };
 
 
-  const handleRemovePlayer = async (playerId: string) => {
-    if (!tournament) return;
-    
-    // Compter les joueurs avec nom (inscrits)
-    const namedPlayersCount = tournament.players.filter((p) => p.name.trim().length > 0).length;
-    if (namedPlayersCount <= 1) {
-      alert("Minimum 1 joueur inscrit requis");
-      return;
-    }
-    
-    if (!confirm("Êtes-vous sûr de vouloir supprimer ce joueur ?")) {
-      return;
-    }
-
-    try {
-      setIsSaving(true);
-      const updatedPlayers = tournament.players.filter((p) => p.id !== playerId);
-      await updateTournament(tournamentId, { players: updatedPlayers });
-      setTournament({ ...tournament, players: updatedPlayers });
+  const handleRemovePlace = (placeIndex: number) => {
+    setTournament((prevTournament) => {
+      if (!prevTournament) return prevTournament;
       
-      // Si des matchs existent, les supprimer car la configuration a changé
-      if (matches.length > 0) {
-        await deleteMatchesByTournament(tournamentId);
-        setMatches([]);
-        await updateTournament(tournamentId, { status: "draft" });
-        setTournament({ ...tournament, status: "draft" });
+      const playerAtPlace = findPlayerAtPlace(placeIndex, prevTournament);
+      if (playerAtPlace) {
+        // Première action : retirer le joueur de cette place
+        return {
+          ...prevTournament,
+          players: prevTournament.players.filter((p) => p.id !== playerAtPlace.id),
+        };
       }
-    } catch (error) {
-      console.error("Error removing player:", error);
-      alert("Erreur lors de la suppression du joueur");
-    } finally {
-      setIsSaving(false);
-    }
+
+      const currentMaxPlayers = prevTournament.maxPlayers || prevTournament.players.length;
+      if (currentMaxPlayers <= 4) {
+        showToast("Minimum 4 places requises", "warning");
+        return prevTournament;
+      }
+
+      const updatedPlayers = prevTournament.players.map((p) => {
+        let place = p.placeIndex;
+        if (place === undefined) {
+          place = prevTournament.players.indexOf(p);
+        }
+
+        if (place > placeIndex) {
+          return { ...p, placeIndex: place - 1 };
+        }
+
+        if (p.placeIndex === undefined) {
+          return { ...p, placeIndex: place };
+        }
+
+        return p;
+      });
+
+      return {
+        ...prevTournament,
+        maxPlayers: currentMaxPlayers - 1,
+        players: updatedPlayers,
+      };
+    });
   };
 
   const handleUpdatePlayer = (playerId: string, playerData: { name: string; userId?: string; photoURL?: string; gender?: "M" | "F" }) => {
@@ -448,18 +603,14 @@ export default function TournamentDetailPage() {
   const handleSavePlayers = async () => {
     if (!tournament) return;
     
-    // Validation
+    // Validation souple : on permet la sauvegarde même si toutes les places ne sont pas remplies
     const namedPlayers = tournament.players.filter((p) => p.name.trim().length > 0);
-    if (namedPlayers.length < 4) {
-      alert("Minimum 4 joueurs avec nom requis");
-      return;
-    }
     
-    // Vérifier les noms uniques
+    // Vérifier les noms uniques uniquement sur les joueurs renseignés
     const playerNames = namedPlayers.map((p) => p.name.trim());
     const uniqueNames = new Set(playerNames);
     if (playerNames.length !== uniqueNames.size) {
-      alert("Les noms des joueurs doivent être uniques");
+      showToast("Les noms des joueurs doivent être uniques", "warning");
       return;
     }
     
@@ -468,7 +619,7 @@ export default function TournamentDetailPage() {
       const namedMales = namedPlayers.filter((p) => p.gender === "M").length;
       const namedFemales = namedPlayers.filter((p) => p.gender === "F").length;
       if (namedMales !== namedFemales) {
-        alert("Le nombre d'hommes et de femmes doit être égal parmi les joueurs inscrits");
+        showToast("Le nombre d'hommes et de femmes doit être égal parmi les joueurs inscrits", "warning");
         return;
       }
     }
@@ -486,14 +637,72 @@ export default function TournamentDetailPage() {
         maxPlayers: tournament.maxPlayers,
       });
       setTournament({ ...tournament, players: playersToSave });
-      alert("Joueurs sauvegardés avec succès !");
+      showToast("Joueurs sauvegardés avec succès !", "success");
     } catch (error) {
       console.error("Error saving players:", error);
-      alert("Erreur lors de la sauvegarde des joueurs");
+      showToast("Erreur lors de la sauvegarde des joueurs", "error");
     } finally {
       setIsSaving(false);
     }
   };
+
+  const handleValidateScores = async () => {
+    if (!tournament) return;
+
+    const hasIncompleteScores = matches.some(
+      (match) => match.score === undefined || match.score === null
+    );
+
+    if (matches.length === 0) {
+      showToast("Aucun match à valider", "info");
+      return;
+    }
+
+    if (hasIncompleteScores) {
+      showToast("Complétez tous les scores avant de valider", "warning");
+      return;
+    }
+
+    try {
+      setIsValidatingScores(true);
+      await updateTournament(tournamentId, {
+        scoresValidated: true,
+        status: "completed",
+      });
+      setTournament((prev) =>
+        prev ? { ...prev, scoresValidated: true, status: "completed" } : prev
+      );
+      showToast("Scores validés avec succès !", "success");
+    } catch (error) {
+      console.error("Error validating scores:", error);
+      showToast("Erreur lors de la validation des scores", "error");
+    } finally {
+      setIsValidatingScores(false);
+    }
+  };
+
+  const toastVariants = {
+    success: {
+      icon: CheckCircle2,
+      container: "border-emerald-500/20 bg-emerald-500/10 text-emerald-50",
+      iconColor: "text-emerald-400",
+    },
+    error: {
+      icon: AlertCircle,
+      container: "border-destructive/30 bg-destructive/10 text-destructive-foreground",
+      iconColor: "text-destructive",
+    },
+    info: {
+      icon: InfoIcon,
+      container: "border-border bg-card text-foreground",
+      iconColor: "text-primary",
+    },
+    warning: {
+      icon: AlertTriangle,
+      container: "border-amber-400/30 bg-amber-500/10 text-amber-50",
+      iconColor: "text-amber-300",
+    },
+  } as const;
 
   if (isLoading) {
     return (
@@ -510,14 +719,47 @@ export default function TournamentDetailPage() {
     return null;
   }
 
-  // Vérifier que l'utilisateur est le propriétaire
-  if (user?.uid !== tournament.userId) {
-    router.push(`/join/${tournamentId}`);
-    return null;
+  const isOwner = user?.uid === tournament.userId;
+  const scoresLocked = Boolean(tournament.scoresValidated);
+
+  if (!isOwner) {
+    return (
+      <ProtectedRoute>
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <div className="text-center">
+            <div className="mb-4 inline-block h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
+            <p className="text-muted-foreground">Redirection vers l&apos;espace public du tournoi...</p>
+          </div>
+        </div>
+      </ProtectedRoute>
+    );
   }
 
   return (
     <ProtectedRoute>
+      {toast && (
+        <div
+          className="fixed inset-x-0 top-6 z-50 flex justify-center px-4"
+          aria-live="polite"
+        >
+          <div
+            className={`flex w-full max-w-sm items-start gap-3 rounded-2xl border px-4 py-3 shadow-2xl backdrop-blur ${toastVariants[toast.type].container}`}
+          >
+            {(() => {
+              const Icon = toastVariants[toast.type].icon;
+              return <Icon className={`h-5 w-5 ${toastVariants[toast.type].iconColor}`} />;
+            })()}
+            <div className="flex-1 text-sm font-medium">{toast.message}</div>
+            <button
+              onClick={dismissToast}
+              className="rounded-full p-1 text-current transition-colors hover:bg-white/10"
+              aria-label="Fermer la notification"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
       <div className="min-h-screen bg-background pb-8">
         {/* Header avec logo */}
         <header className="border-b border-border/50 bg-card/50 backdrop-blur-sm">
@@ -594,6 +836,7 @@ export default function TournamentDetailPage() {
               { id: "settings" as const, label: "Settings", icon: Settings },
               { id: "joueurs" as const, label: "Joueurs", icon: Users },
               { id: "matchs" as const, label: "Matchs", icon: Trophy },
+              { id: "results" as const, label: "Results", icon: Award },
               { id: "media" as const, label: "Media", icon: ImageIcon },
             ].map((tab) => {
               const Icon = tab.icon;
@@ -844,6 +1087,9 @@ export default function TournamentDetailPage() {
                     const player = place.player;
                     const isOccupied = player !== null;
                     
+                    const maxPlaces = tournament.maxPlayers || tournament.players.length;
+                    const removeDisabled = !isOccupied && maxPlaces <= 4;
+
                     return (
                       <div
                         key={place.index}
@@ -941,20 +1187,18 @@ export default function TournamentDetailPage() {
                             }`}
                           />
                         )}
-                        {/* Remove button - seulement si la place est occupée */}
-                        {isOccupied && (
-                          <button
-                            onClick={() => handleRemovePlayer(player.id)}
-                            disabled={tournament.players.filter((p) => p.name.trim().length > 0).length <= 1}
-                            className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
-                              tournament.players.filter((p) => p.name.trim().length > 0).length <= 1
-                                ? "cursor-not-allowed bg-muted text-muted-foreground/50"
-                                : "bg-muted text-muted-foreground hover:bg-destructive hover:text-destructive-foreground"
-                            }`}
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        )}
+                        {/* Remove place button */}
+                        <button
+                          onClick={() => handleRemovePlace(place.index)}
+                          disabled={removeDisabled}
+                          className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
+                            removeDisabled
+                              ? "cursor-not-allowed bg-muted text-muted-foreground/50"
+                              : "bg-muted text-muted-foreground hover:bg-destructive hover:text-destructive-foreground"
+                          }`}
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
                       </div>
                     );
                   })}
@@ -1040,13 +1284,15 @@ export default function TournamentDetailPage() {
                   <div className="space-y-6">
                     <div className="flex items-center justify-between">
                       <h3 className="text-lg font-semibold text-foreground">Rounds</h3>
-                      <button
-                        onClick={handleRegenerateMatches}
-                        disabled={isGenerating}
-                        className="rounded-lg bg-destructive/10 px-4 py-2 text-sm font-medium text-destructive transition-all hover:bg-destructive/20 disabled:opacity-50"
-                      >
-                        {isGenerating ? "Régénération..." : "Régénérer les matchs"}
-                      </button>
+                      {scoresLocked ? (
+                        <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300">
+                          Scores validés
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
+                          Scores éditables
+                        </span>
+                      )}
                     </div>
                     {Array.from({ length: rounds }, (_, i) => i + 1).map((round) => {
                       const roundMatches = getMatchesByRound(round);
@@ -1100,7 +1346,12 @@ export default function TournamentDetailPage() {
                                         }
                                       }}
                                       onFocus={(e) => e.target.select()}
-                                      className="w-14 text-right text-3xl font-bold text-foreground outline-none border-2 border-border focus:border-primary rounded px-2 py-1 bg-transparent transition-colors"
+                                      disabled={scoresLocked}
+                                      className={`w-14 text-right text-3xl font-bold text-foreground outline-none border-2 rounded px-2 py-1 bg-transparent transition-colors ${
+                                        scoresLocked
+                                          ? "border-border/50 text-muted-foreground cursor-not-allowed"
+                                          : "border-border focus:border-primary"
+                                      }`}
                                       style={{ fontFamily: "var(--font-digital)" }}
                                     />
                                   </div>
@@ -1126,7 +1377,12 @@ export default function TournamentDetailPage() {
                                         }
                                       }}
                                       onFocus={(e) => e.target.select()}
-                                      className="w-14 text-right text-3xl font-bold text-foreground outline-none border-2 border-border focus:border-primary rounded px-2 py-1 bg-transparent transition-colors"
+                                      disabled={scoresLocked}
+                                      className={`w-14 text-right text-3xl font-bold text-foreground outline-none border-2 rounded px-2 py-1 bg-transparent transition-colors ${
+                                        scoresLocked
+                                          ? "border-border/50 text-muted-foreground cursor-not-allowed"
+                                          : "border-border focus:border-primary"
+                                      }`}
                                       style={{ fontFamily: "var(--font-digital)" }}
                                     />
                                   </div>
@@ -1137,6 +1393,82 @@ export default function TournamentDetailPage() {
                         </div>
                       );
                     })}
+                    <div className="pt-2">
+                      <button
+                        onClick={handleValidateScores}
+                        disabled={scoresLocked || hasIncompleteScores || isValidatingScores}
+                        className="w-full rounded-full bg-primary px-6 py-3 text-center font-semibold text-primary-foreground shadow-lg transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {scoresLocked
+                          ? "Scores déjà validés"
+                          : isValidatingScores
+                          ? "Validation..."
+                          : "Valider les scores"}
+                      </button>
+                      {!scoresLocked && hasIncompleteScores && (
+                        <p className="mt-2 text-xs text-muted-foreground text-center">
+                          Complétez tous les scores pour valider.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Tab Results */}
+            {activeTab === "results" && (
+              <div>
+                {!scoresLocked ? (
+                  <div className="rounded-xl bg-muted/50 border border-border p-6 text-center">
+                    <Award className="h-12 w-12 text-muted-foreground mx-auto mb-4 opacity-50" />
+                    <p className="text-sm text-muted-foreground">
+                      Validez les scores pour afficher le classement des joueurs.
+                    </p>
+                  </div>
+                ) : leaderboard.length === 0 ? (
+                  <div className="rounded-xl bg-muted/50 border border-border p-6 text-center">
+                    <p className="text-sm text-muted-foreground">
+                      Aucun score enregistré pour le moment.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {leaderboard.map((entry, index) => (
+                      <div
+                        key={entry.player.id}
+                        className="flex items-center gap-3 rounded-2xl bg-card border border-border/60 p-4 shadow-sm"
+                      >
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">
+                          {index + 1}
+                        </div>
+                        {entry.player.photoURL ? (
+                          <Image
+                            src={entry.player.photoURL}
+                            alt={entry.player.name}
+                            width={40}
+                            height={40}
+                            className="h-10 w-10 rounded-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+                            <Users className="h-5 w-5 text-muted-foreground" />
+                          </div>
+                        )}
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold text-foreground">
+                            {entry.player.name}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {entry.matchesPlayed} match{entry.matchesPlayed > 1 ? "s" : ""} joués
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-2xl font-bold text-primary">{entry.points}</p>
+                          <p className="text-xs text-muted-foreground">Points cumulés</p>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -1144,14 +1476,104 @@ export default function TournamentDetailPage() {
 
             {/* Tab Media */}
             {activeTab === "media" && (
-              <div className="rounded-xl bg-muted/50 border border-border p-6 text-center">
-                <ImageIcon className="h-12 w-12 text-muted-foreground mx-auto mb-4 opacity-50" />
-                <p className="text-sm text-muted-foreground">
-                  Fonctionnalité d&apos;upload de médias à venir.
-                </p>
-                <p className="text-sm text-muted-foreground mt-2">
-                  Vous pourrez bientôt ajouter des photos et vidéos de votre tournoi.
-                </p>
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-border/60 bg-card/70 p-4 shadow-sm">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h3 className="text-lg font-semibold text-foreground">Galerie du tournoi</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Partagez des moments clés de votre tournoi avec les joueurs.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleOpenMediaPicker}
+                        disabled={isUploadingMedia}
+                        className="flex items-center gap-2 rounded-xl bg-primary/10 px-4 py-2 text-sm font-medium text-primary transition hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isUploadingMedia ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Upload...
+                          </>
+                        ) : (
+                          <>
+                            <ImageIcon className="h-4 w-4" />
+                            Ajouter des photos
+                          </>
+                        )}
+                      </button>
+                      <input
+                        ref={mediaInputRef}
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="hidden"
+                        onChange={handleMediaUpload}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {mediaItems.length === 0 ? (
+                  <div className="rounded-xl bg-muted/50 border border-border p-6 text-center">
+                    <ImageIcon className="h-12 w-12 text-muted-foreground mx-auto mb-4 opacity-50" />
+                    <p className="text-sm text-muted-foreground">
+                      Aucune photo pour le moment.
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-2">
+                      Ajoutez vos premières photos pour immortaliser ce tournoi.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    {mediaItems.map((media) => (
+                      <div
+                        key={media.id}
+                        className="relative overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm"
+                      >
+                        <div className="relative h-48 w-full">
+                          <Image
+                            src={media.url}
+                            alt={media.uploadedByName || "Photo du tournoi"}
+                            fill
+                            className="object-cover"
+                            sizes="(max-width: 768px) 50vw, 25vw"
+                          />
+                          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent px-3 py-2 text-white">
+                            <p className="text-sm font-semibold">
+                              {media.uploadedByName || "Organisateur"}
+                            </p>
+                            <p className="text-[11px] text-white/70">
+                              {new Date(media.createdAt).toLocaleString("fr-FR", {
+                                day: "2-digit",
+                                month: "short",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </p>
+                            <p className="text-[11px] text-white/80 mt-0.5 flex items-center gap-1">
+                              <span>❤️</span>
+                              <span>{media.likes?.length || 0}</span>
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => handleDeleteMedia(media)}
+                            disabled={mediaDeletingId === media.id}
+                            className="absolute top-2 right-2 rounded-full bg-black/60 p-2 text-white transition hover:bg-black/80 disabled:cursor-not-allowed"
+                            aria-label="Supprimer la photo"
+                          >
+                            {mediaDeletingId === media.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>

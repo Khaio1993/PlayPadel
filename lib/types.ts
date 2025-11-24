@@ -16,6 +16,15 @@ export interface Court {
   name: string;
 }
 
+export interface TournamentMedia {
+  id: string;
+  url: string;
+  uploadedBy: string;
+  uploadedByName?: string;
+  createdAt: string; // ISO string
+  likes?: string[]; // liste des userId ayant liké
+}
+
 export interface Tournament {
   id?: string;
   name: string;
@@ -30,6 +39,8 @@ export interface Tournament {
   userId: string; // ID de l'utilisateur qui a créé le tournoi
   maxPlayers?: number; // Nombre maximum de joueurs prévus pour le tournoi
   isPublic?: boolean; // Si le tournoi est public ou privé
+  scoresValidated?: boolean; // Indique si les scores sont verrouillés
+  media?: TournamentMedia[]; // Galerie d'images du tournoi
 }
 
 export interface Match {

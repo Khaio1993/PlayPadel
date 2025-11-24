@@ -40,3 +40,32 @@ export const deleteProfileImage = async (imageUrl: string): Promise<void> => {
   }
 };
 
+/**
+ * Upload un média pour un tournoi
+ */
+export const uploadTournamentMedia = async (
+  tournamentId: string,
+  file: File
+): Promise<string> => {
+  try {
+    const mediaRef = ref(storage, `tournament-media/${tournamentId}/${Date.now()}_${file.name}`);
+    const snapshot = await uploadBytes(mediaRef, file);
+    return await getDownloadURL(snapshot.ref);
+  } catch (error) {
+    console.error("Error uploading tournament media:", error);
+    throw error;
+  }
+};
+
+/**
+ * Supprimer un média de tournoi
+ */
+export const deleteTournamentMediaFile = async (mediaUrl: string): Promise<void> => {
+  try {
+    const mediaRef = ref(storage, mediaUrl);
+    await deleteObject(mediaRef);
+  } catch (error) {
+    console.error("Error deleting tournament media:", error);
+  }
+};
+

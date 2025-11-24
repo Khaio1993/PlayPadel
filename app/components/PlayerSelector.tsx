@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Image from "next/image";
 import { Search, User, X } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
-import { searchUsers, UserProfile } from "@/lib/users";
+import { searchUsers, UserProfile, getUserById, getUserFullName } from "@/lib/users";
 
 interface PlayerSelectorProps {
   value: string;
@@ -31,21 +31,64 @@ export function PlayerSelector({
   const [searchResults, setSearchResults] = useState<UserProfile[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [recentPlayers, setRecentPlayers] = useState<UserProfile[]>([]);
+  const [currentUserProfile, setCurrentUserProfile] = useState<UserProfile | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Charger les joueurs récents depuis localStorage
-  useEffect(() => {
+  const loadRecentPlayers = useCallback(async () => {
     const stored = localStorage.getItem("recentPlayers");
-    if (stored) {
-      try {
-        const recent = JSON.parse(stored);
-        setRecentPlayers(recent.slice(0, 3));
-      } catch (error) {
-        console.error("Error loading recent players:", error);
-      }
+    if (!stored) {
+      setRecentPlayers([]);
+      return;
+    }
+
+    try {
+      const recent: UserProfile[] = JSON.parse(stored).slice(0, 3);
+      const updatedRecent = await Promise.all(
+        recent.map(async (player) => {
+          try {
+            const freshProfile = await getUserById(player.id);
+            return freshProfile ? { ...player, ...freshProfile } : player;
+          } catch (error) {
+            console.error("Error refreshing recent player:", error);
+            return player;
+          }
+        })
+      );
+      setRecentPlayers(updatedRecent);
+      localStorage.setItem("recentPlayers", JSON.stringify(updatedRecent));
+    } catch (error) {
+      console.error("Error loading recent players:", error);
+      setRecentPlayers([]);
     }
   }, []);
+
+  // Charger les joueurs récents depuis localStorage
+  useEffect(() => {
+    loadRecentPlayers();
+  }, [loadRecentPlayers]);
+
+  // Charger le profil complet de l'utilisateur courant (infos à jour depuis Firestore)
+  useEffect(() => {
+    let isMounted = true;
+    const fetchProfile = async () => {
+      if (!currentUser?.uid) return;
+      try {
+        const profile = await getUserById(currentUser.uid);
+        if (profile && isMounted) {
+          setCurrentUserProfile(profile);
+        }
+      } catch (error) {
+        console.error("Error fetching current user profile:", error);
+      }
+    };
+
+    fetchProfile();
+    return () => {
+      isMounted = false;
+    };
+  }, [currentUser?.uid]);
 
   // Recherche d'utilisateurs
   useEffect(() => {
@@ -84,7 +127,11 @@ export function PlayerSelector({
     }
   }, [isOpen]);
 
-  const handleSelectPlayer = (selectedUser: UserProfile) => {
+  const resolveUserName = (profile: Partial<UserProfile>): string => {
+    return getUserFullName(profile) || profile.email || "Utilisateur";
+  };
+
+  const handleSelectPlayer = async (selectedUser: UserProfile) => {
     // Vérifier si cet utilisateur est déjà utilisé dans le tournoi
     if (selectedUser.id !== currentPlayerId && usedUserIds.includes(selectedUser.id)) {
       // Afficher un message d'erreur ou empêcher la sélection
@@ -92,24 +139,38 @@ export function PlayerSelector({
       return;
     }
 
+    // S'assurer que nous avons les informations à jour depuis Firestore (photo, displayName, etc.)
+    let upToDateUser = selectedUser;
+    if (!selectedUser.photoURL || !selectedUser.firstName || !selectedUser.lastName) {
+      const fetched = await getUserById(selectedUser.id);
+      if (fetched) {
+        upToDateUser = {
+          ...selectedUser,
+          ...fetched,
+        };
+      }
+    }
+
+    const playerName = resolveUserName(upToDateUser);
+
     onChange({
       id: Date.now().toString(),
-      name: selectedUser.displayName,
+      name: playerName,
       gender,
-      userId: selectedUser.id,
-      photoURL: selectedUser.photoURL,
+      userId: upToDateUser.id,
+      photoURL: upToDateUser.photoURL,
     });
 
     // Ajouter aux joueurs récents seulement si ce n'est pas le profil actuel
-    if (selectedUser.id !== currentUser?.uid) {
+    if (upToDateUser.id !== currentUser?.uid) {
       const stored = localStorage.getItem("recentPlayers");
       let recent: UserProfile[] = stored ? JSON.parse(stored) : [];
       
       // Retirer si déjà présent
-      recent = recent.filter((p) => p.id !== selectedUser.id);
+      recent = recent.filter((p) => p.id !== upToDateUser.id);
       
       // Ajouter au début
-      recent.unshift(selectedUser);
+      recent.unshift(upToDateUser);
       
       // Garder seulement les 3 derniers
       recent = recent.slice(0, 3);
@@ -124,13 +185,15 @@ export function PlayerSelector({
 
   const handleSelectCurrentUser = () => {
     if (currentUser) {
-      handleSelectPlayer({
+      const profile = currentUserProfile || {
         id: currentUser.uid,
         email: currentUser.email || "",
         displayName: currentUser.displayName || "User",
         photoURL: currentUser.photoURL || undefined,
         createdAt: new Date(),
-      });
+      };
+
+      void handleSelectPlayer(profile);
     }
   };
 
@@ -138,15 +201,7 @@ export function PlayerSelector({
     // Ouvrir le dropdown au focus
     setIsOpen(true);
     // Charger les joueurs récents à chaque ouverture
-    const stored = localStorage.getItem("recentPlayers");
-    if (stored) {
-      try {
-        const recent = JSON.parse(stored);
-        setRecentPlayers(recent.slice(0, 3));
-      } catch (error) {
-        console.error("Error loading recent players:", error);
-      }
-    }
+    loadRecentPlayers();
   };
 
   const displayValue = value || "";
@@ -159,20 +214,9 @@ export function PlayerSelector({
           ref={inputRef}
           type="text"
           value={displayValue}
-          onChange={(e) => {
-            // Permettre la saisie manuelle
-            const newValue = e.target.value;
-            onChange({
-              id: "",
-              name: newValue,
-              gender,
-            });
-            // Fermer le dropdown si on tape
-            if (newValue.length > 0) {
-              setIsOpen(false);
-            }
-          }}
+          readOnly
           onFocus={handleFocus}
+          onClick={handleFocus}
           className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground transition-colors focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/20"
           placeholder={placeholder}
           style={{ minWidth: "120px" }}
@@ -208,13 +252,21 @@ export function PlayerSelector({
                     : "hover:bg-muted/50"
                 }`}
               >
-                {currentUser.photoURL ? (
+                {currentUserProfile?.photoURL ? (
                   <Image
-                    src={currentUser.photoURL}
-                    alt={currentUser.displayName || "You"}
+                    src={currentUserProfile.photoURL}
+                    alt={resolveUserName(currentUserProfile) || "You"}
                     width={40}
                     height={40}
-                    className="h-10 w-10 rounded-full"
+                    className="h-10 w-10 rounded-full object-cover"
+                  />
+                ) : currentUser.photoURL ? (
+                  <Image
+                    src={currentUser.photoURL}
+                    alt={resolveUserName(currentUserProfile || { displayName: currentUser.displayName || "You", email: currentUser.email || "" }) || "You"}
+                    width={40}
+                    height={40}
+                    className="h-10 w-10 rounded-full object-cover"
                   />
                 ) : (
                   <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
@@ -223,7 +275,7 @@ export function PlayerSelector({
                 )}
                 <div className="flex-1">
                   <div className="text-sm font-medium text-foreground">
-                    Join with my profile
+                    {resolveUserName(currentUserProfile || {}) || currentUser.displayName || "Join with my profile"}
                     {currentUser.uid !== currentPlayerId && usedUserIds.includes(currentUser.uid) && (
                       <span className="ml-2 text-xs text-muted-foreground">
                         (déjà sélectionné)
@@ -231,7 +283,7 @@ export function PlayerSelector({
                     )}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {currentUser.displayName || currentUser.email}
+                    {currentUserProfile?.email || currentUser.email}
                   </div>
                 </div>
               </button>
@@ -281,10 +333,10 @@ export function PlayerSelector({
                         {user.photoURL ? (
                           <Image
                             src={user.photoURL}
-                            alt={user.displayName}
+                            alt={resolveUserName(user) || "Player"}
                             width={32}
                             height={32}
-                            className="h-8 w-8 rounded-full"
+                            className="h-8 w-8 rounded-full object-cover"
                           />
                         ) : (
                           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
@@ -293,7 +345,7 @@ export function PlayerSelector({
                         )}
                         <div className="flex-1">
                           <div className="text-sm font-medium text-foreground">
-                            {user.displayName}
+                            {resolveUserName(user)}
                             {isUsed && (
                               <span className="ml-2 text-xs text-muted-foreground">
                                 (déjà sélectionné)
@@ -335,11 +387,11 @@ export function PlayerSelector({
                         >
                           {user.photoURL ? (
                             <Image
-                              src={user.photoURL}
-                              alt={user.displayName}
+                            src={user.photoURL}
+                            alt={resolveUserName(user) || "Player"}
                               width={32}
                               height={32}
-                              className="h-8 w-8 rounded-full"
+                              className="h-8 w-8 rounded-full object-cover"
                             />
                           ) : (
                             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
@@ -348,7 +400,7 @@ export function PlayerSelector({
                           )}
                           <div className="flex-1">
                             <div className="text-sm font-medium text-foreground">
-                              {user.displayName}
+                            {resolveUserName(user)}
                               {isUsed && (
                                 <span className="ml-2 text-xs text-muted-foreground">
                                   (déjà sélectionné)

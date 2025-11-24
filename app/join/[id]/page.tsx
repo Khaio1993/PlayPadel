@@ -2,15 +2,15 @@
 
 import Image from "next/image";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../contexts/AuthContext";
 import { getTournamentById, updateTournament } from "@/lib/tournaments";
 import { getMatchesByTournament } from "@/lib/matches";
 import { Tournament, Player, Match } from "@/lib/types";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { createOrUpdateUserProfile, getUserById } from "@/lib/users";
-import { Loader2, MapPin, Clock, Users, FileText, Trophy, Image as ImageIcon, Award } from "lucide-react";
+import { createOrUpdateUserProfile, getUserById, getUserFullName } from "@/lib/users";
+import { Loader2, MapPin, Clock, Users, FileText, Trophy, Image as ImageIcon, Award, Heart } from "lucide-react";
 
 export default function JoinTournamentPage() {
   const params = useParams();
@@ -26,6 +26,7 @@ export default function JoinTournamentPage() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"joueurs" | "matchs" | "results" | "media">("joueurs");
   const [userGender, setUserGender] = useState<"M" | "F" | null>(null);
+  const [isLikingMedia, setIsLikingMedia] = useState<string | null>(null);
 
   // Écouter les changements en temps réel du tournoi
   useEffect(() => {
@@ -105,6 +106,69 @@ export default function JoinTournamentPage() {
   // Vérifier si l'utilisateur est le propriétaire du tournoi
   const isOwner = user && tournament?.userId === user.uid;
 
+const playersById = useMemo(() => {
+  const map = new Map<string, Player>();
+  tournament?.players.forEach((player) => {
+    map.set(player.id, player);
+  });
+  return map;
+}, [tournament?.players]);
+
+const leaderboard = useMemo(() => {
+  if (!tournament?.scoresValidated || matches.length === 0) {
+    return [];
+  }
+
+  const stats = new Map<
+    string,
+    {
+      player: Player;
+      points: number;
+      matchesPlayed: number;
+    }
+  >();
+
+  const addScore = (playerId: string, pts: number, counted: boolean) => {
+    const player = playersById.get(playerId);
+    if (!player) return;
+    const entry = stats.get(playerId) || { player, points: 0, matchesPlayed: 0 };
+    entry.points += pts;
+    if (counted) {
+      entry.matchesPlayed += 1;
+    }
+    stats.set(playerId, entry);
+  };
+
+  matches.forEach((match) => {
+    if (!match.score) return;
+    const { team1, team2, score } = match;
+    team1.forEach((playerId) => addScore(playerId, score.team1 || 0, true));
+    team2.forEach((playerId) => addScore(playerId, score.team2 || 0, true));
+  });
+
+  tournament.players.forEach((player) => {
+    if (!stats.has(player.id)) {
+      stats.set(player.id, { player, points: 0, matchesPlayed: 0 });
+    }
+  });
+
+  return Array.from(stats.values()).sort((a, b) => {
+    if (b.points === a.points) {
+      return a.player.name.localeCompare(b.player.name);
+    }
+    return b.points - a.points;
+  });
+}, [matches, playersById, tournament?.players, tournament?.scoresValidated]);
+
+const mediaItems = useMemo(() => {
+  if (!tournament?.media) return [];
+  return [...tournament.media].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+}, [tournament?.media]);
+
+const hasValidatedScores = Boolean(tournament?.scoresValidated && matches.length > 0);
+
 
   // Obtenir les places disponibles
   const getAvailablePlaces = () => {
@@ -153,6 +217,8 @@ export default function JoinTournamentPage() {
         displayName: user.displayName || "User",
         photoURL: user.photoURL || undefined,
       });
+
+      const latestUserProfile = await getUserById(user.uid);
 
       // Vérifier que la place est toujours disponible (en temps réel)
       const currentTournament = await getTournamentById(tournamentId);
@@ -205,17 +271,24 @@ export default function JoinTournamentPage() {
       });
       
       // Créer le nouveau joueur avec son placeIndex
+      const playerName =
+        getUserFullName(latestUserProfile) ||
+        user.displayName ||
+        user.email ||
+        "User";
+
       const newPlayer: Player = {
         id: Date.now().toString(),
-        name: user.displayName || "User",
+        name: playerName,
         gender: placeGender,
         userId: user.uid,
         placeIndex: placeIndex, // Stocker l'index de la place
       };
       
       // Ajouter photoURL seulement si elle existe
-      if (user.photoURL) {
-        newPlayer.photoURL = user.photoURL;
+      const playerPhoto = latestUserProfile?.photoURL || user.photoURL;
+      if (playerPhoto) {
+        newPlayer.photoURL = playerPhoto;
       }
       
       // Ajouter le nouveau joueur au tableau (sans remplir les places intermédiaires)
@@ -233,6 +306,31 @@ export default function JoinTournamentPage() {
       setError(err instanceof Error ? err.message : "Erreur lors de l'inscription");
     } finally {
       setIsJoining(false);
+    }
+  };
+
+  const handleToggleMediaLike = async (mediaId: string) => {
+    if (!user || !tournament?.media) return;
+    setIsLikingMedia(mediaId);
+    try {
+      const updatedMedia = tournament.media.map((media) => {
+        if (media.id !== mediaId) return media;
+        const likes = media.likes || [];
+        const hasLiked = likes.includes(user.uid);
+        const newLikes = hasLiked ? likes.filter((id) => id !== user.uid) : [...likes, user.uid];
+        return {
+          ...media,
+          likes: newLikes,
+        };
+      });
+
+      await updateTournament(tournamentId, { media: updatedMedia });
+      setTournament({ ...tournament, media: updatedMedia });
+    } catch (error) {
+      console.error("Error toggling like:", error);
+      setError("Impossible de mettre à jour le like");
+    } finally {
+      setIsLikingMedia(null);
     }
   };
 
@@ -654,26 +752,138 @@ export default function JoinTournamentPage() {
 
               {/* Tab Results */}
               {activeTab === "results" && (
-                <div className="rounded-xl bg-muted/50 border border-border p-6 text-center">
-                  <Award className="h-12 w-12 text-muted-foreground mx-auto mb-4 opacity-50" />
-                  <p className="text-sm text-muted-foreground">
-                    Les résultats ne sont pas encore disponibles.
-                  </p>
-                  <p className="text-sm text-muted-foreground mt-2">
-                    Revenez plus tard pour voir les résultats.
-                  </p>
+                <div>
+                  {!hasValidatedScores ? (
+                    <div className="rounded-xl bg-muted/50 border border-border p-6 text-center">
+                      <Award className="h-12 w-12 text-muted-foreground mx-auto mb-4 opacity-50" />
+                      <p className="text-sm text-muted-foreground">
+                        Les résultats ne sont pas encore disponibles.
+                      </p>
+                      <p className="text-sm text-muted-foreground mt-2">
+                        Revenez plus tard pour voir les résultats.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {leaderboard.map((entry, index) => (
+                        <div
+                          key={entry.player.id}
+                          className="flex items-center gap-3 rounded-2xl bg-card border border-border/60 p-4 shadow-sm"
+                        >
+                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">
+                            {index + 1}
+                          </div>
+                          {entry.player.photoURL ? (
+                            <Image
+                              src={entry.player.photoURL}
+                              alt={entry.player.name}
+                              width={40}
+                              height={40}
+                              className="h-10 w-10 rounded-full object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+                              <Users className="h-4 w-4 text-muted-foreground" />
+                            </div>
+                          )}
+                          <div className="flex-1">
+                            <p className="text-sm font-semibold text-foreground">
+                              {entry.player.name}
+                              {user?.uid === entry.player.userId && (
+                                <span className="ml-2 text-xs text-primary">(Vous)</span>
+                              )}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {entry.matchesPlayed} match{entry.matchesPlayed > 1 ? "s" : ""} joués
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-2xl font-bold text-primary">{entry.points}</p>
+                            <p className="text-xs text-muted-foreground">Points cumulés</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
               {/* Tab Media */}
               {activeTab === "media" && (
-                <div className="rounded-xl bg-muted/50 border border-border p-6 text-center">
-                  <ImageIcon className="h-12 w-12 text-muted-foreground mx-auto mb-4 opacity-50" />
-                  <p className="text-sm text-muted-foreground">
-                    Aucun média n&apos;a été ajouté pour ce tournoi.
-                  </p>
-                  <p className="text-sm text-muted-foreground mt-2">
-                    Revenez plus tard pour voir les médias.
+                <div className="space-y-4">
+                  {mediaItems.length === 0 ? (
+                    <div className="rounded-xl bg-muted/50 border border-border p-6 text-center">
+                      <ImageIcon className="h-12 w-12 text-muted-foreground mx-auto mb-4 opacity-50" />
+                      <p className="text-sm text-muted-foreground">
+                        Aucun média n&apos;a été ajouté pour ce tournoi.
+                      </p>
+                      <p className="text-sm text-muted-foreground mt-2">
+                        Revenez plus tard pour voir les médias.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3">
+                      {mediaItems.map((media) => {
+                        const likes = media.likes || [];
+                        const hasLiked = user ? likes.includes(user.uid) : false;
+                        return (
+                          <div
+                            key={media.id}
+                            className="relative overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm"
+                            onDoubleClick={() => handleToggleMediaLike(media.id)}
+                          >
+                            <div className="relative h-48 w-full">
+                              <Image
+                                src={media.url}
+                                alt={media.uploadedByName || "Photo du tournoi"}
+                                fill
+                                className="object-cover"
+                                sizes="(max-width: 768px) 50vw, 25vw"
+                              />
+                              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent px-3 py-2 text-white">
+                                <p className="text-sm font-semibold">
+                                  {media.uploadedByName || "Joueur"}
+                                </p>
+                                <p className="text-[11px] text-white/70">
+                                  {new Date(media.createdAt).toLocaleString("fr-FR", {
+                                    day: "2-digit",
+                                    month: "short",
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })}
+                                </p>
+                              </div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleToggleMediaLike(media.id);
+                                }}
+                                disabled={isLikingMedia === media.id}
+                                className={`absolute top-2 right-2 flex items-center gap-1 rounded-full px-3 py-1 text-sm font-semibold backdrop-blur ${
+                                  hasLiked
+                                    ? "bg-red-500/90 text-white"
+                                    : "bg-black/60 text-white"
+                                } disabled:cursor-not-allowed`}
+                              >
+                                {isLikingMedia === media.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Heart
+                                    className={`h-4 w-4 ${
+                                      hasLiked ? "fill-white text-white" : "text-white"
+                                    }`}
+                                  />
+                                )}
+                                <span>{likes.length}</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <p className="text-center text-xs text-muted-foreground">
+                    Astuce : double-cliquez sur une photo pour ajouter ou retirer un ❤️.
                   </p>
                 </div>
               )}

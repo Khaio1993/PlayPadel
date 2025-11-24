@@ -6,7 +6,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import BottomNav from "../components/BottomNav";
 import { ProtectedRoute } from "../components/ProtectedRoute";
 import { useAuth } from "../contexts/AuthContext";
-import { getUserById, updateUserProfile } from "@/lib/users";
+import { getUserById, updateUserProfile, getUserFullName } from "@/lib/users";
 import { uploadProfileImage } from "@/lib/storage";
 import { 
   LogOut, 
@@ -205,6 +205,8 @@ export default function ProfilePage() {
     }
   };
 
+  const resolvedFullName = userProfile ? getUserFullName(userProfile) || "Utilisateur" : "Utilisateur";
+
   if (isLoading) {
     return (
       <ProtectedRoute>
@@ -259,7 +261,7 @@ export default function ProfilePage() {
                   {userProfile?.photoURL ? (
                     <Image
                       src={userProfile.photoURL}
-                      alt={userProfile?.displayName || user.displayName || "User"}
+                      alt={resolvedFullName}
                       width={80}
                       height={80}
                       className="h-20 w-20 rounded-full object-cover"
@@ -267,7 +269,7 @@ export default function ProfilePage() {
                   ) : user.photoURL ? (
                     <Image
                       src={user.photoURL}
-                      alt={userProfile?.displayName || user.displayName || "User"}
+                      alt={resolvedFullName}
                       width={80}
                       height={80}
                       className="h-20 w-20 rounded-full object-cover"
@@ -309,7 +311,7 @@ export default function ProfilePage() {
                 {/* Infos utilisateur */}
                 <div className="flex-1 min-w-0">
                   <h2 className="text-xl font-bold text-foreground mb-3">
-                    {userProfile.displayName || "Utilisateur"}
+                    {resolvedFullName}
                   </h2>
                   
                   {/* Tags */}

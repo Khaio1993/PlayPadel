@@ -349,34 +349,28 @@ export default function OnboardingPage() {
               </p>
             </div>
 
-            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-card via-card to-card/80 p-8 shadow-lg border border-border/50">
-              <div className="absolute inset-0 opacity-[0.03] bg-[radial-gradient(circle_at_1px_1px,_white_1px,_transparent_0)] bg-[length:20px_20px]" />
-              
-              <div className="relative text-center">
-                <div className="mb-4">
-                  <span className="text-6xl font-bold text-primary">
-                    {level || "0.00"}
-                  </span>
-                </div>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  max="10"
-                  value={level}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    if (value === "" || (!isNaN(parseFloat(value)) && parseFloat(value) >= 0 && parseFloat(value) <= 10)) {
-                      setLevel(value);
-                    }
-                  }}
-                  className="w-full rounded-xl border-2 border-border bg-background px-4 py-3 text-center text-2xl font-semibold text-foreground transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-                  placeholder="0.00"
-                />
-                <p className="mt-4 text-sm text-muted-foreground">
-                  Niveau de 0.00 à 10.00
-                </p>
-              </div>
+            <div className="rounded-2xl border border-border/60 bg-card/60 p-6 shadow-lg">
+              <label className="mb-3 block text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+                Niveau (0.00 à 10.00)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                max="10"
+                value={level}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value === "" || (!isNaN(parseFloat(value)) && parseFloat(value) >= 0 && parseFloat(value) <= 10)) {
+                    setLevel(value);
+                  }
+                }}
+                className="w-full rounded-2xl border-2 border-border bg-background px-4 py-4 text-center text-3xl font-semibold text-foreground transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                placeholder="0.00"
+              />
+              <p className="mt-3 text-sm text-muted-foreground text-center">
+                Ce niveau servira de point de départ, puis sera recalculé automatiquement selon vos performances.
+              </p>
             </div>
           </div>
         )}

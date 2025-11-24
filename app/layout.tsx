@@ -65,7 +65,7 @@ export default function RootLayout({
         className={`${inter.variable} ${sourceSerif.variable} ${jetbrainsMono.variable} ${orbitron.variable} antialiased`}
       >
         <AuthProvider>
-          {children}
+        {children}
         </AuthProvider>
       </body>
     </html>

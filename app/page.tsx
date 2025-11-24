@@ -7,9 +7,16 @@ import { useAuth } from "./contexts/AuthContext";
 import { Loader2 } from "lucide-react";
 
 export default function Home() {
-  const { user, loading, signIn } = useAuth();
+  const { user, loading, signIn, emailSignIn, emailSignUp } = useAuth();
   const router = useRouter();
   const [isSigningIn, setIsSigningIn] = useState(false);
+  const [showMoreOptions, setShowMoreOptions] = useState(false);
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [emailError, setEmailError] = useState("");
+  const [emailSuccess, setEmailSuccess] = useState("");
+  const [isSubmittingEmail, setIsSubmittingEmail] = useState(false);
 
   useEffect(() => {
     if (!loading && user) {
@@ -54,6 +61,43 @@ export default function Home() {
     } catch (error) {
       console.error("Error signing in:", error);
       setIsSigningIn(false);
+    }
+  };
+
+  const resetEmailMessages = () => {
+    setEmailError("");
+    setEmailSuccess("");
+  };
+
+  const handleEmailSubmit = async () => {
+    resetEmailMessages();
+    if (!email || !email.includes("@")) {
+      setEmailError("Merci d'entrer un email valide");
+      return;
+    }
+    if (!password || password.length < 6) {
+      setEmailError("Le mot de passe doit contenir au moins 6 caractères");
+      return;
+    }
+
+    try {
+      setIsSubmittingEmail(true);
+      if (authMode === "signup") {
+        await emailSignUp(email.trim(), password);
+        setEmailSuccess("Compte créé ! Vous êtes connecté.");
+      } else {
+        await emailSignIn(email.trim(), password);
+        setEmailSuccess("Connexion réussie !");
+      }
+    } catch (error) {
+      console.error("Email auth error:", error);
+      setEmailError(
+        authMode === "signup"
+          ? "Impossible de créer le compte. Cet email est peut-être déjà utilisé."
+          : "Impossible de vous connecter avec ces identifiants."
+      );
+    } finally {
+      setIsSubmittingEmail(false);
     }
   };
 
@@ -162,6 +206,102 @@ export default function Home() {
               </>
             )}
           </button>
+          <p className="mt-4 text-center text-sm text-white/90">
+            Connexion recommandée via Google pour valider rapidement votre profil PlayPadel.
+          </p>
+          <div className="mt-3 text-center">
+            <button
+              type="button"
+              className="text-sm font-semibold text-white/90 underline decoration-primary/60 underline-offset-4 transition-all hover:text-white"
+              onClick={() => {
+                setShowMoreOptions((prev) => !prev);
+                resetEmailMessages();
+              }}
+            >
+              {showMoreOptions ? "Masquer les autres options" : "Plus d'options"}
+            </button>
+          </div>
+
+          {showMoreOptions && (
+            <div className="mt-4 rounded-3xl border border-white/30 bg-white/90 p-5 text-slate-900 shadow-2xl backdrop-blur-lg">
+              <div className="mb-4 flex items-center justify-between rounded-full bg-white/60 p-1">
+                {(["signin", "signup"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => {
+                      setAuthMode(mode);
+                      resetEmailMessages();
+                    }}
+                    className={`flex-1 rounded-full px-4 py-2 text-sm font-semibold transition-all ${
+                      authMode === mode
+                        ? "bg-primary text-white shadow"
+                        : "text-slate-500"
+                    }`}
+                  >
+                    {mode === "signin" ? "Se connecter" : "Créer un compte"}
+                  </button>
+                ))}
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Email
+                  </label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                    placeholder="votre@email.com"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Mot de passe
+                  </label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                    placeholder="••••••••"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Minimum 6 caractères pour sécuriser votre compte.
+                  </p>
+                </div>
+                {emailError && (
+                  <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">
+                    {emailError}
+                  </div>
+                )}
+                {emailSuccess && (
+                  <div className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                    {emailSuccess}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={handleEmailSubmit}
+                  disabled={isSubmittingEmail}
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isSubmittingEmail ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {authMode === "signup" ? "Création..." : "Connexion..."}
+                    </>
+                  ) : (
+                    <>{authMode === "signup" ? "Créer mon compte" : "Me connecter"}</>
+                  )}
+                </button>
+                <p className="text-center text-xs text-slate-500">
+                  Cette option est idéale si vous ne pouvez pas utiliser Google.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

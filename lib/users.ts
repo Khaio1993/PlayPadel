@@ -31,6 +31,17 @@ export interface UserProfile {
   onboardingCompleted?: boolean;
 }
 
+export const getUserFullName = (profile?: Partial<UserProfile> | null): string => {
+  if (!profile) return "";
+  const first = profile.firstName?.trim();
+  const last = profile.lastName?.trim();
+  const combined = [first, last].filter(Boolean).join(" ").trim();
+  if (combined.length > 0) {
+    return combined;
+  }
+  return profile.displayName?.trim() || "";
+};
+
 /**
  * Créer ou mettre à jour le profil d'un utilisateur
  * Ne met à jour photoURL que si le profil n'existe pas encore (premier sign-up)
@@ -44,17 +55,28 @@ export const createOrUpdateUserProfile = async (
   },
   options?: {
     updatePhotoURL?: boolean; // Si true, force la mise à jour du photoURL même si existe
+    updateDisplayName?: boolean; // Si true, force la mise à jour du displayName même si existe
   }
 ): Promise<void> => {
   try {
     const userRef = doc(db, USERS_COLLECTION, userId);
     const userSnap = await getDoc(userRef);
     
+    const existingData = userSnap.exists() ? userSnap.data() : null;
+
     const dataToUpdate: Record<string, any> = {
       email: userData.email,
-      displayName: userData.displayName,
       updatedAt: Timestamp.now(),
     };
+    
+    const shouldUpdateDisplayName =
+      !userSnap.exists() ||
+      options?.updateDisplayName ||
+      !existingData?.displayName;
+
+    if (shouldUpdateDisplayName) {
+      dataToUpdate.displayName = userData.displayName;
+    }
     
     // Ne mettre à jour photoURL que si :
     // 1. Le profil n'existe pas encore (premier sign-up)
@@ -96,23 +118,38 @@ export const searchUsers = async (
     // Filtrer côté client pour une recherche insensible à la casse
     const allUsers: UserProfile[] = [];
     
-    querySnapshot.docs.forEach((doc) => {
-      const data = doc.data();
+    querySnapshot.docs.forEach((docSnap) => {
+      const data = docSnap.data();
       allUsers.push({
-        id: doc.id,
+        id: docSnap.id,
         email: data.email || "",
         displayName: data.displayName || "",
+        firstName: data.firstName,
+        lastName: data.lastName,
         photoURL: data.photoURL,
         createdAt: data.createdAt?.toDate() || new Date(),
+        preferredSide: data.preferredSide,
+        gender: data.gender,
+        onboardingCompleted: data.onboardingCompleted,
       });
     });
 
     // Filtrer par terme de recherche (insensible à la casse)
     const filtered = allUsers
       .filter(
-        (user) =>
-          user.displayName.toLowerCase().includes(searchLower) ||
-          user.email.toLowerCase().includes(searchLower)
+        (user) => {
+          const displayNameLower = (user.displayName || "").toLowerCase();
+          const emailLower = (user.email || "").toLowerCase();
+          const firstLower = (user.firstName || "").toLowerCase();
+          const lastLower = (user.lastName || "").toLowerCase();
+          const fullNameLower = `${firstLower} ${lastLower}`.trim();
+
+          return (
+            (displayNameLower && displayNameLower.includes(searchLower)) ||
+            (fullNameLower && fullNameLower.includes(searchLower)) ||
+            emailLower.includes(searchLower)
+          );
+        }
       )
       .slice(0, limitCount);
 
