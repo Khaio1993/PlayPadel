@@ -216,7 +216,10 @@ export function PlayerSelector({
           value={displayValue}
           readOnly
           onFocus={handleFocus}
-          onClick={handleFocus}
+          onClick={() => {
+            loadRecentPlayers();
+            setIsOpen(true);
+          }}
           className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground transition-colors focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/20"
           placeholder={placeholder}
           style={{ minWidth: "120px" }}
