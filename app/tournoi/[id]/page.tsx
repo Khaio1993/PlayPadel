@@ -33,6 +33,8 @@ import { Tournament, Match, Player, TournamentMedia } from "@/lib/types";
 import { useAuth } from "../../contexts/AuthContext";
 import { PlayerSelector } from "../../components/PlayerSelector";
 import { uploadTournamentMedia, deleteTournamentMediaFile } from "@/lib/storage";
+import { getUsersByIds, updateUserLevel, LevelHistoryEntry } from "@/lib/users";
+import { calculateTournamentLevelChanges, LevelChange } from "@/lib/levelCalculator";
 
 export default function TournamentDetailPage() {
   const params = useParams();
@@ -665,14 +667,77 @@ export default function TournamentDetailPage() {
 
     try {
       setIsValidatingScores(true);
+
+      // 1. Récupérer les userIds des joueurs qui ont un compte
+      const playerUserIds = tournament.players
+        .filter((p) => p.userId)
+        .map((p) => p.userId!);
+
+      // 2. Récupérer les profils utilisateurs pour avoir leurs niveaux actuels
+      const userProfiles = await getUsersByIds(playerUserIds);
+
+      // 3. Créer une map playerId -> userData pour le calcul
+      const playersLevelData = new Map<string, { userId: string; level: number; reliability: number }>();
+      
+      tournament.players.forEach((player) => {
+        if (player.userId) {
+          const userProfile = userProfiles.get(player.userId);
+          if (userProfile) {
+            playersLevelData.set(player.id, {
+              userId: player.userId,
+              level: userProfile.level ?? 5, // Niveau par défaut: 5
+              reliability: userProfile.levelReliability ?? 0, // Fiabilité par défaut: 0%
+            });
+          }
+        }
+      });
+
+      // 4. Calculer les changements de niveau pour tous les joueurs
+      const levelChanges = calculateTournamentLevelChanges(
+        matches,
+        playersLevelData,
+        tournamentId
+      );
+
+      // 5. Appliquer les changements de niveau à chaque utilisateur
+      const updatePromises: Promise<void>[] = [];
+      
+      levelChanges.forEach((change, oderId) => {
+        const historyEntry: LevelHistoryEntry = {
+          delta: change.delta,
+          oldLevel: change.oldLevel,
+          newLevel: change.newLevel,
+          oldReliability: change.oldReliability,
+          newReliability: change.newReliability,
+          tournamentId,
+          tournamentName: tournament.name,
+          timestamp: change.timestamp,
+        };
+
+        updatePromises.push(
+          updateUserLevel(change.userId, change.newLevel, change.newReliability, historyEntry)
+        );
+      });
+
+      await Promise.all(updatePromises);
+
+      // 6. Marquer le tournoi comme validé
       await updateTournament(tournamentId, {
         scoresValidated: true,
         status: "completed",
       });
+      
       setTournament((prev) =>
         prev ? { ...prev, scoresValidated: true, status: "completed" } : prev
       );
-      showToast("Scores validés avec succès !", "success");
+
+      const playersUpdated = levelChanges.size;
+      showToast(
+        playersUpdated > 0
+          ? `Scores validés ! ${playersUpdated} niveau(x) mis à jour.`
+          : "Scores validés avec succès !",
+        "success"
+      );
     } catch (error) {
       console.error("Error validating scores:", error);
       showToast("Erreur lors de la validation des scores", "error");

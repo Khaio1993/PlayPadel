@@ -18,10 +18,10 @@ import {
   Calendar,
   Phone,
   Loader2,
-  Camera,
-  Trophy
+  Camera
 } from "lucide-react";
 import { UserProfile } from "@/lib/users";
+import { LevelCard } from "../components/LevelCard";
 
 export default function ProfilePage() {
   const { user, signOut } = useAuth();
@@ -354,31 +354,12 @@ export default function ProfilePage() {
               <h3 className="mb-4 text-lg font-semibold text-foreground">
                 Votre niveau
               </h3>
-              <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-card via-card to-card/80 p-6 shadow-lg border border-border/50">
-                {/* Subtle pattern overlay */}
-                <div className="absolute inset-0 opacity-[0.03] bg-[radial-gradient(circle_at_1px_1px,_white_1px,_transparent_0)] bg-[length:20px_20px]" />
-                
-                <div className="relative flex items-center justify-between">
-                  <div className="flex-1">
-                    <div className="mb-2">
-                      <span className="text-5xl font-bold text-primary">
-                        {userProfile.level !== undefined ? userProfile.level.toFixed(2) : "0.00"}
-                      </span>
-                      <span className="ml-2 text-2xl font-semibold text-muted-foreground">Level</span>
-                    </div>
-                    <div className="flex items-center gap-3 mt-3">
-                      <span className="text-sm text-muted-foreground">Level reliability:</span>
-                      <span className="text-lg font-semibold text-foreground">0%</span>
-                      <span className="px-3 py-1 rounded-full text-xs font-medium bg-muted/50 text-muted-foreground border border-border">
-                        Faible
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 border-2 border-primary/20">
-                    <Trophy className="h-8 w-8 text-primary" />
-                  </div>
-                </div>
-              </div>
+              <LevelCard
+                level={userProfile.level ?? 5}
+                reliability={userProfile.levelReliability ?? 0}
+                levelHistory={userProfile.levelHistory}
+                isLoading={false}
+              />
             </div>
           )}
 

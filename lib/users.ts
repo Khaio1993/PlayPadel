@@ -14,6 +14,17 @@ import {
 
 const USERS_COLLECTION = "users";
 
+export interface LevelHistoryEntry {
+  delta: number;
+  oldLevel: number;
+  newLevel: number;
+  oldReliability: number;
+  newReliability: number;
+  tournamentId: string;
+  tournamentName?: string;
+  timestamp: string;
+}
+
 export interface UserProfile {
   id: string;
   email: string;
@@ -27,6 +38,8 @@ export interface UserProfile {
   phoneNumber?: string;
   gender?: "M" | "F";
   level?: number;
+  levelReliability?: number; // 0-100, fiabilité du niveau
+  levelHistory?: LevelHistoryEntry[]; // Historique des changements de niveau
   preferredSide?: "left" | "right";
   onboardingCompleted?: boolean;
 }
@@ -182,6 +195,8 @@ export const getUserById = async (userId: string): Promise<UserProfile | null> =
         phoneNumber: data.phoneNumber,
         gender: data.gender,
         level: data.level,
+        levelReliability: data.levelReliability,
+        levelHistory: data.levelHistory,
         preferredSide: data.preferredSide,
         onboardingCompleted: data.onboardingCompleted || false,
       };
@@ -222,5 +237,64 @@ export const updateUserProfile = async (
     console.error("Error updating user profile:", error);
     throw error;
   }
+};
+
+/**
+ * Mettre à jour le niveau d'un utilisateur après un tournoi
+ */
+export const updateUserLevel = async (
+  userId: string,
+  newLevel: number,
+  newReliability: number,
+  historyEntry: LevelHistoryEntry
+): Promise<void> => {
+  try {
+    const userRef = doc(db, USERS_COLLECTION, userId);
+    const userSnap = await getDoc(userRef);
+    
+    if (!userSnap.exists()) {
+      console.warn(`User ${userId} not found for level update`);
+      return;
+    }
+    
+    const currentData = userSnap.data();
+    const currentHistory: LevelHistoryEntry[] = currentData.levelHistory || [];
+    
+    // Ajouter la nouvelle entrée à l'historique (garder les 20 dernières)
+    const updatedHistory = [historyEntry, ...currentHistory].slice(0, 20);
+    
+    await setDoc(userRef, {
+      level: newLevel,
+      levelReliability: newReliability,
+      levelHistory: updatedHistory,
+      updatedAt: Timestamp.now(),
+    }, { merge: true });
+    
+    console.log(`Updated level for user ${userId}: ${newLevel} (reliability: ${newReliability}%)`);
+  } catch (error) {
+    console.error("Error updating user level:", error);
+    throw error;
+  }
+};
+
+/**
+ * Récupérer plusieurs utilisateurs par leurs IDs
+ */
+export const getUsersByIds = async (userIds: string[]): Promise<Map<string, UserProfile>> => {
+  const users = new Map<string, UserProfile>();
+  
+  // Filtrer les IDs vides ou undefined
+  const validIds = userIds.filter(id => id && id.trim().length > 0);
+  
+  // Récupérer chaque utilisateur (Firebase ne supporte pas IN avec plus de 10 éléments)
+  const promises = validIds.map(async (userId) => {
+    const user = await getUserById(userId);
+    if (user) {
+      users.set(userId, user);
+    }
+  });
+  
+  await Promise.all(promises);
+  return users;
 };
 

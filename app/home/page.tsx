@@ -10,7 +10,8 @@ import { TrendingUp, Users, Trophy, Calendar, CheckCircle2, X, ChevronRight } fr
 import { getTournaments } from "@/lib/tournaments";
 import { Tournament } from "@/lib/types";
 import { useAuth } from "../contexts/AuthContext";
-import { getUserById } from "@/lib/users";
+import { getUserById, UserProfile, LevelHistoryEntry } from "@/lib/users";
+import { LevelCard } from "../components/LevelCard";
 
 function SuccessMessage() {
   const searchParams = useSearchParams();
@@ -57,7 +58,9 @@ export default function HomePage() {
   const { user } = useAuth();
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [isLoadingTournaments, setIsLoadingTournaments] = useState(true);
-  const [userLevel, setUserLevel] = useState<number | null>(null);
+  const [userLevel, setUserLevel] = useState<number>(5);
+  const [userReliability, setUserReliability] = useState<number>(0);
+  const [levelHistory, setLevelHistory] = useState<LevelHistoryEntry[]>([]);
   const [isLoadingLevel, setIsLoadingLevel] = useState(true);
 
   const loadTournaments = async () => {
@@ -87,8 +90,10 @@ export default function HomePage() {
     try {
       setIsLoadingLevel(true);
       const userData = await getUserById(user.uid);
-      if (userData?.level !== undefined) {
-        setUserLevel(userData.level);
+      if (userData) {
+        setUserLevel(userData.level ?? 5);
+        setUserReliability(userData.levelReliability ?? 0);
+        setLevelHistory(userData.levelHistory ?? []);
       }
     } catch (error) {
       console.error("Error loading user level:", error);
@@ -281,31 +286,12 @@ export default function HomePage() {
           <h3 className="mb-4 text-lg font-semibold text-foreground">
             Votre niveau
           </h3>
-          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-card via-card to-card/80 p-6 shadow-lg border border-border/50">
-            {/* Subtle pattern overlay */}
-            <div className="absolute inset-0 opacity-[0.03] bg-[radial-gradient(circle_at_1px_1px,_white_1px,_transparent_0)] bg-[length:20px_20px]" />
-            
-            <div className="relative flex items-center justify-between">
-              <div className="flex-1">
-                <div className="mb-2">
-                  <span className="text-5xl font-bold text-primary">
-                    {isLoadingLevel ? "..." : (userLevel !== null ? userLevel.toFixed(2) : "0.00")}
-                  </span>
-                  <span className="ml-2 text-2xl font-semibold text-muted-foreground">Level</span>
-                </div>
-                <div className="flex items-center gap-3 mt-3">
-                  <span className="text-sm text-muted-foreground">Level reliability:</span>
-                  <span className="text-lg font-semibold text-foreground">0%</span>
-                  <span className="px-3 py-1 rounded-full text-xs font-medium bg-muted/50 text-muted-foreground border border-border">
-                    Faible
-                  </span>
-                </div>
-              </div>
-              <div className="flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 border-2 border-primary/20">
-                <Trophy className="h-8 w-8 text-primary" />
-              </div>
-            </div>
-          </div>
+          <LevelCard
+            level={userLevel}
+            reliability={userReliability}
+            levelHistory={levelHistory}
+            isLoading={isLoadingLevel}
+          />
         </div>
 
         {/* Stats */}
