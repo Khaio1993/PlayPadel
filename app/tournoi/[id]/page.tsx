@@ -23,7 +23,10 @@ import {
   CheckCircle2,
   AlertCircle,
   Info as InfoIcon,
-  Award
+  Award,
+  TrendingUp,
+  TrendingDown,
+  ArrowRight
 } from "lucide-react";
 import { ProtectedRoute } from "../../components/ProtectedRoute";
 import { getTournamentById, updateTournament, deleteTournament } from "@/lib/tournaments";
@@ -48,6 +51,17 @@ export default function TournamentDetailPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isValidatingScores, setIsValidatingScores] = useState(false);
+  const [isLoadingPlayerLevels, setIsLoadingPlayerLevels] = useState(false);
+  const [playerLevelInfo, setPlayerLevelInfo] = useState<
+    Record<
+      string,
+      {
+        currentLevel?: number;
+        previousLevel?: number;
+        delta?: number;
+      }
+    >
+  >({});
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState<"settings" | "joueurs" | "matchs" | "results" | "media">("settings");
   const [editingTitle, setEditingTitle] = useState(false);
@@ -65,6 +79,56 @@ export default function TournamentDetailPage() {
   const mediaInputRef = useRef<HTMLInputElement>(null);
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [mediaDeletingId, setMediaDeletingId] = useState<string | null>(null);
+
+  const loadPlayerLevelInfo = useCallback(
+    async (players: Player[]) => {
+      if (!players || players.length === 0) {
+        setPlayerLevelInfo({});
+        return;
+      }
+
+      const userIds = players.filter((p) => p.userId).map((p) => p.userId!) ;
+      if (userIds.length === 0) {
+        setPlayerLevelInfo({});
+        return;
+      }
+
+      try {
+        setIsLoadingPlayerLevels(true);
+        const userProfiles = await getUsersByIds(userIds);
+        const info: Record<string, { currentLevel?: number; previousLevel?: number; delta?: number }> = {};
+
+        players.forEach((player) => {
+          if (!player.userId) return;
+          const profile = userProfiles.get(player.userId);
+          if (!profile) return;
+
+          const tournamentEntry = profile.levelHistory?.find(
+            (entry) => entry.tournamentId === tournamentId
+          );
+
+          if (tournamentEntry) {
+            info[player.id] = {
+              currentLevel: tournamentEntry.newLevel,
+              previousLevel: tournamentEntry.oldLevel,
+              delta: tournamentEntry.delta,
+            };
+          } else if (profile.level !== undefined) {
+            info[player.id] = {
+              currentLevel: profile.level,
+            };
+          }
+        });
+
+        setPlayerLevelInfo(info);
+      } catch (error) {
+        console.error("Error loading player level info:", error);
+      } finally {
+        setIsLoadingPlayerLevels(false);
+      }
+    },
+    [tournamentId]
+  );
 
   useEffect(() => {
     loadTournament();
@@ -119,6 +183,7 @@ export default function TournamentDetailPage() {
         setTempTitle(tournamentData.name || "");
         setTempLocation(tournamentData.location || "");
         setTempTime(tournamentData.time || "");
+        await loadPlayerLevelInfo(tournamentData.players);
       } else {
         router.push("/home");
       }
@@ -639,6 +704,7 @@ export default function TournamentDetailPage() {
         maxPlayers: tournament.maxPlayers,
       });
       setTournament({ ...tournament, players: playersToSave });
+      await loadPlayerLevelInfo(playersToSave);
       showToast("Joueurs sauvegardés avec succès !", "success");
     } catch (error) {
       console.error("Error saving players:", error);
@@ -650,6 +716,7 @@ export default function TournamentDetailPage() {
 
   const handleValidateScores = async () => {
     if (!tournament) return;
+    const currentPlayers = tournament.players;
 
     const hasIncompleteScores = matches.some(
       (match) => match.score === undefined || match.score === null
@@ -720,6 +787,7 @@ export default function TournamentDetailPage() {
       });
 
       await Promise.all(updatePromises);
+      await loadPlayerLevelInfo(currentPlayers);
 
       // 6. Marquer le tournoi comme validé
       await updateTournament(tournamentId, {
@@ -1499,7 +1567,9 @@ export default function TournamentDetailPage() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {leaderboard.map((entry, index) => (
+                    {leaderboard.map((entry, index) => {
+                      const levelInfo = playerLevelInfo[entry.player.id];
+                      return (
                       <div
                         key={entry.player.id}
                         className="flex items-center gap-3 rounded-2xl bg-card border border-border/60 p-4 shadow-sm"
@@ -1531,9 +1601,28 @@ export default function TournamentDetailPage() {
                         <div className="text-right">
                           <p className="text-2xl font-bold text-primary">{entry.points}</p>
                           <p className="text-xs text-muted-foreground">Points cumulés</p>
+                          {levelInfo?.previousLevel !== undefined &&
+                            levelInfo?.currentLevel !== undefined && (
+                            <div className="mt-2 text-xs text-muted-foreground flex items-center justify-end gap-2">
+                              <span>{levelInfo.previousLevel.toFixed(2)}</span>
+                              {levelInfo.delta && levelInfo.delta !== 0 ? (
+                                levelInfo.delta > 0 ? (
+                                  <TrendingUp className="h-3 w-3 text-green-500" />
+                                ) : (
+                                  <TrendingDown className="h-3 w-3 text-red-500" />
+                                )
+                              ) : (
+                                <ArrowRight className="h-3 w-3 text-muted-foreground" />
+                              )}
+                              <span className="font-semibold text-foreground">
+                                {levelInfo.currentLevel.toFixed(2)}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
