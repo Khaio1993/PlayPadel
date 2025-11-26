@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../contexts/AuthContext";
@@ -10,7 +11,7 @@ import { Tournament, Player, Match } from "@/lib/types";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { createOrUpdateUserProfile, getUserById, getUserFullName } from "@/lib/users";
-import { Loader2, MapPin, Clock, Users, FileText, Trophy, Image as ImageIcon, Award, Heart } from "lucide-react";
+import { Loader2, MapPin, Clock, Users, FileText, Trophy, Image as ImageIcon, Award, Heart, ArrowLeft } from "lucide-react";
 
 export default function JoinTournamentPage() {
   const params = useParams();
@@ -395,6 +396,12 @@ const hasValidatedScores = Boolean(tournament?.scoresValidated && matches.length
 
       {/* Contenu principal */}
       <main className="mx-auto max-w-lg px-6 py-8">
+        <Link href="/home">
+          <button className="mb-4 flex items-center gap-2 text-muted-foreground transition-colors hover:text-foreground">
+            <ArrowLeft className="h-5 w-5" />
+            <span className="text-sm font-medium">Retour</span>
+          </button>
+        </Link>
         <h1 className="text-3xl font-bold text-foreground mb-2">{tournament.name}</h1>
         <p className="text-muted-foreground mb-6">Rejoignez ce tournoi</p>
 

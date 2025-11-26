@@ -8,7 +8,8 @@ import BottomNav from "../components/BottomNav";
 import { ProtectedRoute } from "../components/ProtectedRoute";
 import { TrendingUp, Users, Trophy, Calendar, CheckCircle2, X, ChevronRight } from "lucide-react";
 import { getTournaments } from "@/lib/tournaments";
-import { Tournament } from "@/lib/types";
+import { getMatchesByTournament } from "@/lib/matches";
+import { Tournament, Match, Player } from "@/lib/types";
 import { useAuth } from "../contexts/AuthContext";
 import { getUserById, UserProfile, LevelHistoryEntry } from "@/lib/users";
 import { LevelCard } from "../components/LevelCard";
@@ -58,10 +59,24 @@ export default function HomePage() {
   const { user } = useAuth();
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [isLoadingTournaments, setIsLoadingTournaments] = useState(true);
+  const [isLoadingStats, setIsLoadingStats] = useState(false);
   const [userLevel, setUserLevel] = useState<number>(5);
   const [userReliability, setUserReliability] = useState<number>(0);
   const [levelHistory, setLevelHistory] = useState<LevelHistoryEntry[]>([]);
   const [isLoadingLevel, setIsLoadingLevel] = useState(true);
+  const [tournamentsPlayed, setTournamentsPlayed] = useState(0);
+  const [tournamentsWon, setTournamentsWon] = useState(0);
+  const [partnersCount, setPartnersCount] = useState(0);
+  const [tournamentsThisWeek, setTournamentsThisWeek] = useState(0);
+  const [recentActivity, setRecentActivity] = useState<
+    {
+      id: string;
+      title: string;
+      date: Date;
+      resultLabel: string;
+      resultType: "win" | "second" | "participation";
+    }[]
+  >([]);
 
   const loadTournaments = async () => {
     if (!user) return;
@@ -111,6 +126,14 @@ export default function HomePage() {
     return () => window.removeEventListener("focus", handleFocus);
   }, []);
 
+  // Calculer les statistiques utilisateur quand les tournois changent
+  useEffect(() => {
+    if (user) {
+      computeUserStats(user.uid, tournaments);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tournaments, user]);
+
   const formatDate = (date: Date | string) => {
     const d = typeof date === "string" ? new Date(date) : date;
     const now = new Date();
@@ -124,31 +147,187 @@ export default function HomePage() {
     return `Il y a ${Math.floor(diffDays / 30)} mois`;
   };
 
+  const computeUserStats = async (userId: string, userTournaments: Tournament[]) => {
+    if (!userTournaments || userTournaments.length === 0) {
+      setTournamentsPlayed(0);
+      setTournamentsWon(0);
+      setPartnersCount(0);
+      setTournamentsThisWeek(0);
+      setRecentActivity([]);
+      return;
+    }
+
+    try {
+      setIsLoadingStats(true);
+      const now = new Date();
+      const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+      let played = 0;
+      let wins = 0;
+      const partners = new Set<string>();
+      const activities: {
+        id: string;
+        title: string;
+        date: Date;
+        resultLabel: string;
+        resultType: "win" | "second" | "participation";
+      }[] = [];
+
+      const relevantTournaments = userTournaments.filter(
+        (t) => t.players?.some((p) => p.userId === userId) && t.scoresValidated
+      );
+
+      const promises = relevantTournaments.map(async (tournament) => {
+        if (!tournament.id) return;
+        const matches = await getMatchesByTournament(tournament.id);
+        if (!matches || matches.length === 0) return;
+
+        const playersById = new Map<string, Player>();
+        tournament.players.forEach((p) => playersById.set(p.id, p));
+
+        const statsMap = new Map<
+          string,
+          {
+            player: Player;
+            points: number;
+            matchesPlayed: number;
+          }
+        >();
+
+        const addScore = (playerId: string, points: number, counted: boolean) => {
+          const player = playersById.get(playerId);
+          if (!player) return;
+          const entry =
+            statsMap.get(playerId) || { player, points: 0, matchesPlayed: 0 };
+          entry.points += points;
+          if (counted) {
+            entry.matchesPlayed += 1;
+          }
+          statsMap.set(playerId, entry);
+        };
+
+        matches.forEach((match: Match) => {
+          if (!match.score) return;
+          const { team1, team2, score } = match;
+          team1.forEach((playerId) => addScore(playerId, score.team1 || 0, true));
+          team2.forEach((playerId) => addScore(playerId, score.team2 || 0, true));
+        });
+
+        tournament.players.forEach((player) => {
+          if (!statsMap.has(player.id)) {
+            statsMap.set(player.id, { player, points: 0, matchesPlayed: 0 });
+          }
+        });
+
+        const leaderboard = Array.from(statsMap.values()).sort((a, b) => {
+          if (b.points === a.points) {
+            return a.player.name.localeCompare(b.player.name);
+          }
+          return b.points - a.points;
+        });
+
+        const userPlayers = tournament.players.filter((p) => p.userId === userId);
+        if (userPlayers.length === 0) return;
+
+        played += 1;
+
+        let bestRank = Infinity;
+        userPlayers.forEach((p) => {
+          const idx = leaderboard.findIndex((entry) => entry.player.id === p.id);
+          if (idx !== -1 && idx + 1 < bestRank) {
+            bestRank = idx + 1;
+          }
+        });
+
+        if (bestRank === 1) {
+          wins += 1;
+        }
+
+        matches.forEach((match: Match) => {
+          const allTeams: [string, string][] = [match.team1, match.team2];
+          allTeams.forEach((team) => {
+            const userIndex = team.findIndex((pid) =>
+              userPlayers.some((up) => up.id === pid)
+            );
+            if (userIndex !== -1) {
+              const partnerId = team[userIndex === 0 ? 1 : 0];
+              partners.add(partnerId);
+            }
+          });
+        });
+
+        const eventDate =
+          tournament.time && tournament.time !== ""
+            ? new Date(tournament.time)
+            : tournament.createdAt instanceof Date
+            ? tournament.createdAt
+            : new Date(tournament.createdAt);
+
+        let resultLabel = "Participation";
+        let resultType: "win" | "second" | "participation" = "participation";
+
+        if (bestRank === 1) {
+          resultLabel = "Victoire";
+          resultType = "win";
+        } else if (bestRank === 2) {
+          resultLabel = "2ème place";
+          resultType = "second";
+        }
+
+        activities.push({
+          id: tournament.id,
+          title: tournament.name,
+          date: eventDate,
+          resultLabel,
+          resultType,
+        });
+      });
+
+      await Promise.all(promises);
+
+      activities.sort((a, b) => b.date.getTime() - a.date.getTime());
+
+      const thisWeekCount = activities.filter(
+        (a) => a.date.getTime() >= weekAgo.getTime()
+      ).length;
+
+      setTournamentsPlayed(played);
+      setTournamentsWon(wins);
+      setPartnersCount(partners.size);
+      setTournamentsThisWeek(thisWeekCount);
+      setRecentActivity(activities.slice(0, 3));
+    } catch (error) {
+      console.error("Error computing user stats:", error);
+    } finally {
+      setIsLoadingStats(false);
+    }
+  };
+
   const stats = [
     {
       label: "Tournois joués",
-      value: "0",
+      value: tournamentsPlayed.toString(),
       icon: Trophy,
       color: "text-primary",
       bgColor: "bg-primary/10",
     },
     {
       label: "Victoires",
-      value: "0",
+      value: tournamentsWon.toString(),
       icon: TrendingUp,
       color: "text-green-500",
       bgColor: "bg-green-500/10",
     },
     {
       label: "Partenaires",
-      value: "0",
+      value: partnersCount.toString(),
       icon: Users,
       color: "text-blue-500",
       bgColor: "bg-blue-500/10",
     },
     {
       label: "Cette semaine",
-      value: "0",
+      value: tournamentsThisWeek.toString(),
       icon: Calendar,
       color: "text-orange-500",
       bgColor: "bg-orange-500/10",
@@ -233,6 +412,8 @@ export default function HomePage() {
                   ? `/tournoi/${tournament.id}` 
                   : `/join/${tournament.id}`;
                 
+                const isCompleted = Boolean(tournament.scoresValidated || tournament.status === "completed");
+
                 return (
                   <Link
                     key={tournament.id}
@@ -248,6 +429,11 @@ export default function HomePage() {
                           {!isOwner && (
                             <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary">
                               Participant
+                            </span>
+                          )}
+                          {isCompleted && (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                              Terminé
                             </span>
                           )}
                         </div>
@@ -313,7 +499,7 @@ export default function HomePage() {
                     <Icon className={`h-5 w-5 ${stat.color}`} />
                   </div>
                   <div className="text-2xl font-bold text-foreground">
-                    {stat.value}
+                    {isLoadingStats ? "..." : stat.value}
                   </div>
                   <div className="text-sm text-muted-foreground">
                     {stat.label}
@@ -329,42 +515,45 @@ export default function HomePage() {
           <h3 className="mb-4 text-lg font-semibold text-foreground">
             Activité récente
           </h3>
-          <div className="space-y-3">
-            {[
-              {
-                title: "Tournoi Mixte - Samedi",
-                date: "Il y a 2 jours",
-                result: "🏆 Victoire",
-              },
-              {
-                title: "Americano Classique",
-                date: "Il y a 5 jours",
-                result: "2ème place",
-              },
-              {
-                title: "Mexicano Express",
-                date: "Il y a 1 semaine",
-                result: "Participation",
-              },
-            ].map((activity, index) => (
-              <div
-                key={index}
-                className="flex items-center justify-between rounded-xl bg-card p-4 shadow-sm"
-              >
-                <div>
-                  <div className="font-medium text-foreground">
-                    {activity.title}
+          {isLoadingStats ? (
+            <div className="rounded-xl bg-muted/30 p-6 text-center text-sm text-muted-foreground">
+              Chargement de votre activité...
+            </div>
+          ) : recentActivity.length === 0 ? (
+            <div className="rounded-xl bg-muted/30 p-6 text-center text-sm text-muted-foreground">
+              Aucune activité récente pour le moment.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {recentActivity.map((activity) => (
+                <div
+                  key={activity.id}
+                  className="flex items-center justify-between rounded-xl bg-card p-4 shadow-sm"
+                >
+                  <div>
+                    <div className="font-medium text-foreground">
+                      {activity.title}
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      {formatDate(activity.date)}
+                    </div>
                   </div>
-                  <div className="text-sm text-muted-foreground">
-                    {activity.date}
+                  <div
+                    className={`text-sm font-medium ${
+                      activity.resultType === "win"
+                        ? "text-primary"
+                        : activity.resultType === "second"
+                        ? "text-lime-400"
+                        : "text-primary"
+                    }`}
+                  >
+                    {activity.resultType === "win" ? "🏆 " : null}
+                    {activity.resultLabel}
                   </div>
                 </div>
-                <div className="text-sm font-medium text-primary">
-                  {activity.result}
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </main>
 

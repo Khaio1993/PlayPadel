@@ -5,9 +5,9 @@ const path = require('path');
 // Créer les icônes PWA à partir du logo
 async function generateIcons() {
   const publicDir = path.join(__dirname, '..', 'public');
-  const logoPath = path.join(publicDir, 'logoPPLight.svg');
+  const logoPath = path.join(publicDir, 'iconapp.svg');
   
-  // Vérifier si le logo existe
+  // Vérifier si l'icône existe
   if (!fs.existsSync(logoPath)) {
     console.error('Logo not found:', logoPath);
     return;
