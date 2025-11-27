@@ -1256,7 +1256,7 @@ export default function TournamentDetailPage() {
                               }
                               gender={player.gender}
                               placeholder={`Joueur ${place.index + 1}`}
-                              currentPlayerId={player.userId}
+                              currentPlayerId={player.userId || undefined}
                               usedUserIds={tournament.players
                                 .filter((p) => p.id !== player.id && p.userId)
                                 .map((p) => p.userId!)}

@@ -853,7 +853,7 @@ const hasValidatedScores = Boolean(tournament?.scoresValidated && matches.length
                               </span>
                             </div>
                             <div className="space-y-3">
-                              {roundMatches.map((match) => {
+                              {roundMatches.map((match, matchIndex) => {
                                 const getPlayer = (playerId: string): Player | null => {
                                   return (
                                     tournament?.players.find((p) => p.id === playerId) || null
@@ -951,7 +951,7 @@ const hasValidatedScores = Boolean(tournament?.scoresValidated && matches.length
                                         {getCourtName(match.courtId)}
                                       </span>
                                       <span>
-                                        Match #{match.round}-{match.order || 1}
+                                        Match #{match.round}-{matchIndex + 1}
                                       </span>
                                     </div>
 
