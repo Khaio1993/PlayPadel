@@ -22,18 +22,22 @@ export function generateMatches(players: Player[], courts: { id: string; name: s
     throw new Error("Le nombre d'hommes et de femmes doit être égal");
   }
 
-  const numPairs = males.length;
-  const numCourts = courts.length > 0 ? courts.length : 1;
-  const courtIds = courts.length > 0 ? courts.map((c) => c.id) : ["default"];
-  const matchesPerRound = numCourts; // Nombre de matchs par round = nombre de courts
-  const numRounds = numPairs; // Nombre de rounds = nombre de paires
+  const numPairs = males.length; // nombre de paires homme/femme possibles
+  const totalPlayers = players.length;
 
-  // Vérifier qu'on a assez de courts pour le nombre de matchs par round
-  if (matchesPerRound > numPairs / 2) {
-    throw new Error(
-      `Il faut au moins ${Math.ceil((numPairs / 2) / matchesPerRound)} terrains pour ${numPairs} paires avec ${matchesPerRound} matchs par round`
-    );
+  // Chaque match = 4 joueurs (2 paires), donc matchesPerRound = joueurs / 4 = paires / 2
+  if (totalPlayers % 4 !== 0) {
+    throw new Error("Le nombre total de joueurs doit être un multiple de 4");
   }
+
+  const matchesPerRound = numPairs / 2; // Nombre de matchs par round = joueurs/4
+  const numRounds = numPairs; // On garde la rotation complète sur le nombre de paires
+
+  // Gestion des terrains :
+  // - Aucun terrain ou un seul terrain : tous les matchs utilisent ce même courtId
+  // - Plusieurs terrains : les matchs sont répartis sur les courts (1 match par court tant que possible)
+  const courtIds = courts.length > 0 ? courts.map((c) => c.id) : ["default"];
+  const hasSingleOrNoCourt = courtIds.length <= 1;
 
   const matches: Match[] = [];
 
@@ -107,7 +111,9 @@ export function generateMatches(players: Player[], courts: { id: string; name: s
         const match: Match = {
           tournamentId: "",
           round,
-          courtId: courtIds[matchIndex % courtIds.length],
+          courtId: hasSingleOrNoCourt
+            ? courtIds[0]
+            : courtIds[matchIndex % courtIds.length],
           team1: pairs[pairIndex1] as [string, string],
           team2: pairs[pairIndex2] as [string, string],
           status: "pending",

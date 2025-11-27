@@ -10,8 +10,8 @@ import { getMatchesByTournament } from "@/lib/matches";
 import { Tournament, Player, Match } from "@/lib/types";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { createOrUpdateUserProfile, getUserById, getUserFullName } from "@/lib/users";
-import { Loader2, MapPin, Clock, Users, FileText, Trophy, Image as ImageIcon, Award, Heart, ArrowLeft } from "lucide-react";
+import { createOrUpdateUserProfile, getUserById, getUserFullName, getUsersByIds } from "@/lib/users";
+import { Loader2, MapPin, Clock, Users, FileText, Trophy, Image as ImageIcon, Award, Heart, ArrowLeft, TrendingUp, TrendingDown, ArrowRight } from "lucide-react";
 
 export default function JoinTournamentPage() {
   const params = useParams();
@@ -25,9 +25,19 @@ export default function JoinTournamentPage() {
   const [isJoining, setIsJoining] = useState(false);
   const [selectedPlace, setSelectedPlace] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"joueurs" | "matchs" | "results" | "media">("joueurs");
+  const [activeTab, setActiveTab] = useState<"infos" | "joueurs" | "matchs" | "results" | "media">("infos");
   const [userGender, setUserGender] = useState<"M" | "F" | null>(null);
   const [isLikingMedia, setIsLikingMedia] = useState<string | null>(null);
+  const [playerLevelInfo, setPlayerLevelInfo] = useState<
+    Record<
+      string,
+      {
+        currentLevel?: number;
+        previousLevel?: number;
+        delta?: number;
+      }
+    >
+  >({});
 
   // Écouter les changements en temps réel du tournoi
   useEffect(() => {
@@ -98,6 +108,55 @@ export default function JoinTournamentPage() {
     }
   }, [user]);
 
+  // Charger les infos de niveau des joueurs (comme sur la page organisateur)
+  useEffect(() => {
+    const loadPlayerLevelInfo = async () => {
+      if (!tournament || !tournament.players || tournament.players.length === 0) {
+        setPlayerLevelInfo({});
+        return;
+      }
+
+      const userIds = tournament.players.filter((p) => p.userId).map((p) => p.userId!);
+      if (userIds.length === 0) {
+        setPlayerLevelInfo({});
+        return;
+      }
+
+      try {
+        const userProfiles = await getUsersByIds(userIds);
+        const info: Record<string, { currentLevel?: number; previousLevel?: number; delta?: number }> = {};
+
+        tournament.players.forEach((player) => {
+          if (!player.userId) return;
+          const profile = userProfiles.get(player.userId);
+          if (!profile) return;
+
+          const tournamentEntry = profile.levelHistory?.find(
+            (entry) => entry.tournamentId === tournamentId
+          );
+
+          if (tournamentEntry) {
+            info[player.id] = {
+              currentLevel: tournamentEntry.newLevel,
+              previousLevel: tournamentEntry.oldLevel,
+              delta: tournamentEntry.delta,
+            };
+          } else if (profile.level !== undefined) {
+            info[player.id] = {
+              currentLevel: profile.level,
+            };
+          }
+        });
+
+        setPlayerLevelInfo(info);
+      } catch (err) {
+        console.error("Error loading player level info (join page):", err);
+      }
+    };
+
+    loadPlayerLevelInfo();
+  }, [tournament, tournamentId]);
+
   // Vérifier si l'utilisateur est déjà dans le tournoi
   // Vérification stricte : seulement si userId existe ET correspond à l'UID actuel
   const isUserAlreadyInTournament = user && tournament?.players.some(
@@ -126,30 +185,73 @@ const leaderboard = useMemo(() => {
       player: Player;
       points: number;
       matchesPlayed: number;
+      wins: number;
+      draws: number;
+      losses: number;
     }
   >();
 
-  const addScore = (playerId: string, pts: number, counted: boolean) => {
+  const ensureEntry = (playerId: string) => {
     const player = playersById.get(playerId);
-    if (!player) return;
-    const entry = stats.get(playerId) || { player, points: 0, matchesPlayed: 0 };
-    entry.points += pts;
-    if (counted) {
-      entry.matchesPlayed += 1;
-    }
+    if (!player) return null;
+    const entry =
+      stats.get(playerId) || {
+        player,
+        points: 0,
+        matchesPlayed: 0,
+        wins: 0,
+        draws: 0,
+        losses: 0,
+      };
     stats.set(playerId, entry);
+    return entry;
   };
 
   matches.forEach((match) => {
     if (!match.score) return;
     const { team1, team2, score } = match;
-    team1.forEach((playerId) => addScore(playerId, score.team1 || 0, true));
-    team2.forEach((playerId) => addScore(playerId, score.team2 || 0, true));
+
+    const team1Score = score.team1 || 0;
+    const team2Score = score.team2 || 0;
+
+    let team1Result: "win" | "draw" | "loss";
+    let team2Result: "win" | "draw" | "loss";
+
+    if (team1Score === team2Score) {
+      team1Result = "draw";
+      team2Result = "draw";
+    } else if (team1Score > team2Score) {
+      team1Result = "win";
+      team2Result = "loss";
+    } else {
+      team1Result = "loss";
+      team2Result = "win";
+    }
+
+    const updatePlayer = (playerId: string, pts: number, result: "win" | "draw" | "loss") => {
+      const entry = ensureEntry(playerId);
+      if (!entry) return;
+      entry.points += pts;
+      entry.matchesPlayed += 1;
+      if (result === "win") entry.wins += 1;
+      if (result === "draw") entry.draws += 1;
+      if (result === "loss") entry.losses += 1;
+    };
+
+    team1.forEach((playerId) => updatePlayer(playerId, team1Score, team1Result));
+    team2.forEach((playerId) => updatePlayer(playerId, team2Score, team2Result));
   });
 
   tournament.players.forEach((player) => {
     if (!stats.has(player.id)) {
-      stats.set(player.id, { player, points: 0, matchesPlayed: 0 });
+      stats.set(player.id, {
+        player,
+        points: 0,
+        matchesPlayed: 0,
+        wins: 0,
+        draws: 0,
+        losses: 0,
+      });
     }
   });
 
@@ -405,68 +507,56 @@ const hasValidatedScores = Boolean(tournament?.scoresValidated && matches.length
         <h1 className="text-3xl font-bold text-foreground mb-2">{tournament.name}</h1>
         <p className="text-muted-foreground mb-6">Rejoignez ce tournoi</p>
 
-        {/* Informations du tournoi */}
-        <div className="mb-8 space-y-4 rounded-2xl bg-card p-6 shadow-sm">
-          <div className="flex items-start gap-3">
-            <MapPin className="h-5 w-5 text-muted-foreground mt-0.5" />
-            <div>
-              <p className="text-sm font-semibold text-foreground">Lieu</p>
-              <p className="text-sm text-muted-foreground">
-                {tournament.location || "Non spécifié"}
-              </p>
-            </div>
-          </div>
-
-          {tournament.time && (
-            <div className="flex items-start gap-3">
-              <Clock className="h-5 w-5 text-muted-foreground mt-0.5" />
-              <div>
-                <p className="text-sm font-semibold text-foreground">Date et heure</p>
-                <p className="text-sm text-muted-foreground">
-                  {new Date(tournament.time).toLocaleString("fr-FR")}
-                </p>
+        {/* Cas où l'utilisateur n'est pas encore inscrit : layout actuel (infos + places) */}
+        {!isUserAlreadyInTournament && (
+          <>
+            {/* Informations du tournoi */}
+            <div className="mb-8 space-y-4 rounded-2xl bg-card p-6 shadow-sm">
+              <div className="flex items-start gap-3">
+                <MapPin className="h-5 w-5 text-muted-foreground mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Lieu</p>
+                  <p className="text-sm text-muted-foreground">
+                    {tournament.location || "Non spécifié"}
+                  </p>
+                </div>
               </div>
-            </div>
-          )}
 
-          <div className="flex items-start gap-3">
-            <Users className="h-5 w-5 text-muted-foreground mt-0.5" />
-            <div>
-              <p className="text-sm font-semibold text-foreground">Joueurs</p>
-              <p className="text-sm text-muted-foreground">
-                {filledPlaces}/{totalPlaces} places occupées
-              </p>
-            </div>
-          </div>
+              {tournament.time && (
+                <div className="flex items-start gap-3">
+                  <Clock className="h-5 w-5 text-muted-foreground mt-0.5" />
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">Date et heure</p>
+                    <p className="text-sm text-muted-foreground">
+                      {new Date(tournament.time).toLocaleString("fr-FR")}
+                    </p>
+                  </div>
+                </div>
+              )}
 
-          {tournament.description && (
-            <div className="flex items-start gap-3">
-              <FileText className="h-5 w-5 text-muted-foreground mt-0.5" />
-              <div>
-                <p className="text-sm font-semibold text-foreground">Description</p>
-                <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-                  {tournament.description}
-                </p>
+              <div className="flex items-start gap-3">
+                <Users className="h-5 w-5 text-muted-foreground mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Joueurs</p>
+                  <p className="text-sm text-muted-foreground">
+                    {filledPlaces}/{totalPlaces} places occupées
+                  </p>
+                </div>
               </div>
-            </div>
-          )}
-        </div>
 
-        {/* Message si déjà inscrit */}
-        {isUserAlreadyInTournament && (
-          <div className="mb-6 rounded-xl bg-primary/10 border border-primary/20 p-4">
-            <p className="text-sm font-medium text-foreground">
-              ✓ Vous êtes déjà inscrit à ce tournoi
-            </p>
-            {isOwner && (
-              <button
-                onClick={() => router.push(`/tournoi/${tournamentId}`)}
-                className="mt-3 text-sm font-medium text-primary hover:underline"
-              >
-                Voir le tournoi →
-              </button>
-            )}
-          </div>
+              {tournament.description && (
+                <div className="flex items-start gap-3">
+                  <FileText className="h-5 w-5 text-muted-foreground mt-0.5" />
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">Description</p>
+                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                      {tournament.description}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
         )}
 
         {/* Places disponibles - seulement si pas déjà inscrit */}
@@ -575,6 +665,7 @@ const hasValidatedScores = Boolean(tournament?.scoresValidated && matches.length
             {/* Navigation des tabs */}
             <div className="mb-6 flex gap-2 overflow-x-auto pb-2">
               {[
+                { id: "infos" as const, label: "Infos", icon: FileText },
                 { id: "joueurs" as const, label: "Joueurs", icon: Users },
                 { id: "matchs" as const, label: "Matchs", icon: Trophy },
                 { id: "results" as const, label: "Results", icon: Award },
@@ -601,6 +692,73 @@ const hasValidatedScores = Boolean(tournament?.scoresValidated && matches.length
 
             {/* Contenu des tabs */}
             <div className="min-h-[200px]">
+              {/* Tab Infos */}
+              {activeTab === "infos" && (
+                <div>
+                  {/* Informations du tournoi */}
+                  <div className="mb-6 space-y-4 rounded-2xl bg-card p-6 shadow-sm">
+                    <div className="flex items-start gap-3">
+                      <MapPin className="h-5 w-5 text-muted-foreground mt-0.5" />
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">Lieu</p>
+                        <p className="text-sm text-muted-foreground">
+                          {tournament.location || "Non spécifié"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {tournament.time && (
+                      <div className="flex items-start gap-3">
+                        <Clock className="h-5 w-5 text-muted-foreground mt-0.5" />
+                        <div>
+                          <p className="text-sm font-semibold text-foreground">Date et heure</p>
+                          <p className="text-sm text-muted-foreground">
+                            {new Date(tournament.time).toLocaleString("fr-FR")}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex items-start gap-3">
+                      <Users className="h-5 w-5 text-muted-foreground mt-0.5" />
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">Joueurs</p>
+                        <p className="text-sm text-muted-foreground">
+                          {filledPlaces}/{totalPlaces} places occupées
+                        </p>
+                      </div>
+                    </div>
+
+                    {tournament.description && (
+                      <div className="flex items-start gap-3">
+                        <FileText className="h-5 w-5 text-muted-foreground mt-0.5" />
+                        <div>
+                          <p className="text-sm font-semibold text-foreground">Description</p>
+                          <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                            {tournament.description}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Message si déjà inscrit */}
+                  <div className="rounded-xl bg-primary/10 border border-primary/20 p-4">
+                    <p className="text-sm font-medium text-foreground">
+                      ✓ Vous êtes déjà inscrit à ce tournoi
+                    </p>
+                    {isOwner && (
+                      <button
+                        onClick={() => router.push(`/tournoi/${tournamentId}`)}
+                        className="mt-3 text-sm font-medium text-primary hover:underline"
+                      >
+                        Voir le tournoi →
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Tab Joueurs */}
               {activeTab === "joueurs" && (
                 <div>
@@ -682,16 +840,23 @@ const hasValidatedScores = Boolean(tournament?.scoresValidated && matches.length
                         if (roundMatches.length === 0) return null;
 
                         return (
-                          <div key={round} className="rounded-xl bg-card p-4 shadow-sm">
-                            <h4 className="mb-4 text-base font-semibold text-foreground">
-                              Round {round}
-                            </h4>
+                          <div
+                            key={round}
+                            className="rounded-3xl bg-card/80 p-4 shadow-sm border border-border/60"
+                          >
+                            <div className="mb-4 flex items-center justify-between">
+                              <h4 className="text-base font-semibold text-foreground">
+                                Round {round}
+                              </h4>
+                              <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                                {roundMatches.length} match{roundMatches.length > 1 ? "s" : ""}
+                              </span>
+                            </div>
                             <div className="space-y-3">
                               {roundMatches.map((match) => {
-                                const getPlayerName = (playerId: string): string => {
+                                const getPlayer = (playerId: string): Player | null => {
                                   return (
-                                    tournament?.players.find((p) => p.id === playerId)
-                                      ?.name || "Inconnu"
+                                    tournament?.players.find((p) => p.id === playerId) || null
                                   );
                                 };
 
@@ -707,44 +872,107 @@ const hasValidatedScores = Boolean(tournament?.scoresValidated && matches.length
                                   team2: 0,
                                 };
 
+                                const team1Players = match.team1
+                                  .map((id) => getPlayer(id))
+                                  .filter((p): p is Player => !!p);
+                                const team2Players = match.team2
+                                  .map((id) => getPlayer(id))
+                                  .filter((p): p is Player => !!p);
+
+                                const renderTeam = (players: Player[], alignRight?: boolean) => {
+                                  return (
+                                    <div className="flex items-center justify-between gap-3">
+                                      {!alignRight && (
+                                        <div className="flex items-center gap-2">
+                                          {players.map((p) =>
+                                            p.photoURL ? (
+                                              <Image
+                                                key={p.id}
+                                                src={p.photoURL}
+                                                alt={p.name}
+                                                width={28}
+                                                height={28}
+                                                className="h-7 w-7 rounded-full object-cover ring-2 ring-background -ml-1 first:ml-0"
+                                              />
+                                            ) : (
+                                              <div
+                                                key={p.id}
+                                                className="flex h-7 w-7 items-center justify-center rounded-full bg-muted ring-2 ring-background -ml-1 first:ml-0"
+                                              >
+                                                <Users className="h-3 w-3 text-muted-foreground" />
+                                              </div>
+                                            )
+                                          )}
+                                        </div>
+                                      )}
+                                      <div className="flex-1">
+                                        <p
+                                          className={`text-sm font-medium text-foreground ${
+                                            alignRight ? "text-right" : ""
+                                          }`}
+                                        >
+                                          {players.map((p) => p.name).join(" & ")}
+                                        </p>
+                                      </div>
+                                      {alignRight && (
+                                        <div className="flex items-center gap-2">
+                                          {players.map((p) =>
+                                            p.photoURL ? (
+                                              <Image
+                                                key={p.id}
+                                                src={p.photoURL}
+                                                alt={p.name}
+                                                width={28}
+                                                height={28}
+                                                className="h-7 w-7 rounded-full object-cover ring-2 ring-background -ml-1 first:ml-0"
+                                              />
+                                            ) : (
+                                              <div
+                                                key={p.id}
+                                                className="flex h-7 w-7 items-center justify-center rounded-full bg-muted ring-2 ring-background -ml-1 first:ml-0"
+                                              >
+                                                <Users className="h-3 w-3 text-muted-foreground" />
+                                              </div>
+                                            )
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                };
+
                                 return (
                                   <div
                                     key={match.id}
-                                    className="rounded-lg border border-border bg-background p-4"
+                                    className="rounded-2xl border border-border bg-background p-4 shadow-xs"
                                   >
-                                    <div className="mb-4 text-xs font-medium text-muted-foreground">
-                                      {getCourtName(match.courtId)}
+                                    <div className="mb-3 flex items-center justify-between text-[11px] font-medium text-muted-foreground">
+                                      <span className="uppercase tracking-wide">
+                                        {getCourtName(match.courtId)}
+                                      </span>
+                                      <span>
+                                        Match #{match.round}-{match.order || 1}
+                                      </span>
                                     </div>
 
                                     {/* Équipe 1 */}
-                                    <div className="mb-3 flex items-center justify-between">
-                                      <div className="flex-1">
-                                        <p className="text-sm font-medium text-foreground">
-                                          {getPlayerName(match.team1[0])} &{" "}
-                                          {getPlayerName(match.team1[1])}
-                                        </p>
-                                      </div>
-                                      <div className="w-14 text-right text-3xl font-bold text-foreground">
-                                        {currentScore.team1}
-                                      </div>
-                                    </div>
+                                    {renderTeam(team1Players)}
 
-                                    <div className="my-2 text-center text-xs text-muted-foreground">
-                                      VS
+                                    {/* Score central */}
+                                    <div className="my-3 flex items-baseline justify-center gap-3 text-foreground">
+                                      <span className="text-3xl font-bold">
+                                        {currentScore.team1 || 0}
+                                      </span>
+                                      <span className="text-xs font-semibold text-muted-foreground tracking-wide">
+                                        VS
+                                      </span>
+                                      <span className="text-3xl font-bold">
+                                        {currentScore.team2 || 0}
+                                      </span>
                                     </div>
 
                                     {/* Équipe 2 */}
-                                    <div className="mb-3 flex items-center justify-between">
-                                      <div className="flex-1">
-                                        <p className="text-sm font-medium text-foreground">
-                                          {getPlayerName(match.team2[0])} &{" "}
-                                          {getPlayerName(match.team2[1])}
-                                        </p>
-                                      </div>
-                                      <div className="w-14 text-right text-3xl font-bold text-foreground">
-                                        {currentScore.team2}
-                                      </div>
-                                    </div>
+                                    {renderTeam(team2Players, true)}
                                   </div>
                                 );
                               })}
@@ -772,44 +1000,198 @@ const hasValidatedScores = Boolean(tournament?.scoresValidated && matches.length
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {leaderboard.map((entry, index) => (
-                        <div
-                          key={entry.player.id}
-                          className="flex items-center gap-3 rounded-2xl bg-card border border-border/60 p-4 shadow-sm"
-                        >
-                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">
-                            {index + 1}
-                          </div>
-                          {entry.player.photoURL ? (
-                            <Image
-                              src={entry.player.photoURL}
-                              alt={entry.player.name}
-                              width={40}
-                              height={40}
-                              className="h-10 w-10 rounded-full object-cover"
-                            />
-                          ) : (
-                            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-                              <Users className="h-4 w-4 text-muted-foreground" />
-                            </div>
-                          )}
-                          <div className="flex-1">
-                            <p className="text-sm font-semibold text-foreground">
-                              {entry.player.name}
-                              {user?.uid === entry.player.userId && (
-                                <span className="ml-2 text-xs text-primary">(Vous)</span>
+                      {leaderboard.map((entry, index) => {
+                        const levelInfo = playerLevelInfo[entry.player.id];
+
+                        // Styles de rang (or, argent, bronze)
+                        const getRankStyles = () => {
+                          if (index === 0) {
+                            return {
+                              badgeClass:
+                                "bg-gradient-to-br from-yellow-400 via-amber-400 to-yellow-500 text-[#4b3b12]",
+                              textClass: "text-amber-600",
+                            };
+                          }
+                          if (index === 1) {
+                            return {
+                              badgeClass:
+                                "bg-gradient-to-br from-slate-200 via-slate-300 to-slate-400 text-slate-800",
+                              textClass: "text-slate-600",
+                            };
+                          }
+                          if (index === 2) {
+                            return {
+                              badgeClass:
+                                "bg-gradient-to-br from-amber-700 via-amber-600 to-amber-500 text-amber-50",
+                              textClass: "text-amber-700",
+                            };
+                          }
+                          return {
+                            badgeClass: "bg-primary/10 text-primary",
+                            textClass: "text-primary",
+                          };
+                        };
+
+                        const rankStyles = getRankStyles();
+
+                        // Carte spéciale pour le Top 1
+                        if (index === 0) {
+                          return (
+                            <div
+                              key={entry.player.id}
+                              className="flex items-center gap-4 rounded-3xl bg-card border border-amber-200/70 shadow-md p-5"
+                            >
+                              <div className="flex h-12 w-12 items-center justify-center rounded-full ring-4 ring-amber-100">
+                                <div
+                                  className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold ${rankStyles.badgeClass}`}
+                                >
+                                  1
+                                </div>
+                              </div>
+                              {entry.player.photoURL ? (
+                                <Image
+                                  src={entry.player.photoURL}
+                                  alt={entry.player.name}
+                                  width={56}
+                                  height={56}
+                                  className="h-14 w-14 rounded-full object-cover ring-4 ring-amber-100"
+                                />
+                              ) : (
+                                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted ring-4 ring-amber-100">
+                                  <Users className="h-6 w-6 text-muted-foreground" />
+                                </div>
                               )}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {entry.matchesPlayed} match{entry.matchesPlayed > 1 ? "s" : ""} joués
-                            </p>
+                              <div className="flex-1">
+                                <p className="text-sm font-semibold text-foreground">
+                                  {entry.player.name}
+                                  {user?.uid === entry.player.userId && (
+                                    <span className="ml-2 text-xs text-primary">(Vous)</span>
+                                  )}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {entry.matchesPlayed} match
+                                  {entry.matchesPlayed > 1 ? "s" : ""} joués
+                                </p>
+                                <p className="mt-1 text-xs">
+                                  <span className="font-semibold text-emerald-500">
+                                    {entry.wins}V
+                                  </span>
+                                  <span className="mx-1 text-muted-foreground">-</span>
+                                  <span className="font-semibold text-amber-500">
+                                    {entry.draws}N
+                                  </span>
+                                  <span className="mx-1 text-muted-foreground">-</span>
+                                  <span className="font-semibold text-red-500">
+                                    {entry.losses}D
+                                  </span>
+                                </p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-3xl font-bold text-primary">
+                                  {entry.points}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  Points cumulés
+                                </p>
+                                {levelInfo?.previousLevel !== undefined &&
+                                  levelInfo?.currentLevel !== undefined && (
+                                    <div className="mt-2 text-xs text-muted-foreground flex items-center justify-end gap-2">
+                                      <span>{levelInfo.previousLevel.toFixed(2)}</span>
+                                      {levelInfo.delta && levelInfo.delta !== 0 ? (
+                                        levelInfo.delta > 0 ? (
+                                          <TrendingUp className="h-3 w-3 text-green-500" />
+                                        ) : (
+                                          <TrendingDown className="h-3 w-3 text-red-500" />
+                                        )
+                                      ) : (
+                                        <ArrowRight className="h-3 w-3 text-muted-foreground" />
+                                      )}
+                                      <span className="font-semibold text-foreground">
+                                        {levelInfo.currentLevel.toFixed(2)}
+                                      </span>
+                                    </div>
+                                  )}
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        // Cartes standard (avec argent / bronze pour 2 et 3)
+                        return (
+                          <div
+                            key={entry.player.id}
+                            className="flex items-center gap-3 rounded-2xl bg-card border border-border/60 p-4 shadow-sm"
+                          >
+                            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-sm font-bold">
+                              <div
+                                className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold ${rankStyles.badgeClass}`}
+                              >
+                                {index + 1}
+                              </div>
+                            </div>
+                            {entry.player.photoURL ? (
+                              <Image
+                                src={entry.player.photoURL}
+                                alt={entry.player.name}
+                                width={40}
+                                height={40}
+                                className="h-10 w-10 rounded-full object-cover"
+                              />
+                            ) : (
+                              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+                                <Users className="h-4 w-4 text-muted-foreground" />
+                              </div>
+                            )}
+                            <div className="flex-1">
+                              <p className="text-sm font-semibold text-foreground">
+                                {entry.player.name}
+                                {user?.uid === entry.player.userId && (
+                                  <span className="ml-2 text-xs text-primary">(Vous)</span>
+                                )}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {entry.matchesPlayed} match
+                                {entry.matchesPlayed > 1 ? "s" : ""} joués
+                              </p>
+                              <p className="mt-1 text-xs">
+                                <span className="font-semibold text-emerald-500">
+                                  {entry.wins}V
+                                </span>
+                                <span className="mx-1 text-muted-foreground">-</span>
+                                <span className="font-semibold text-amber-500">
+                                  {entry.draws}N
+                                </span>
+                                <span className="mx-1 text-muted-foreground">-</span>
+                                <span className="font-semibold text-red-500">
+                                  {entry.losses}D
+                                </span>
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-2xl font-bold text-primary">{entry.points}</p>
+                              <p className="text-xs text-muted-foreground">Points cumulés</p>
+                              {levelInfo?.previousLevel !== undefined &&
+                                levelInfo?.currentLevel !== undefined && (
+                                  <div className="mt-2 text-xs text-muted-foreground flex items-center justify-end gap-2">
+                                    <span>{levelInfo.previousLevel.toFixed(2)}</span>
+                                    {levelInfo.delta && levelInfo.delta !== 0 ? (
+                                      levelInfo.delta > 0 ? (
+                                        <TrendingUp className="h-3 w-3 text-green-500" />
+                                      ) : (
+                                        <TrendingDown className="h-3 w-3 text-red-500" />
+                                      )
+                                    ) : (
+                                      <ArrowRight className="h-3 w-3 text-muted-foreground" />
+                                    )}
+                                    <span className="font-semibold text-foreground">
+                                      {levelInfo.currentLevel.toFixed(2)}
+                                    </span>
+                                  </div>
+                                )}
+                            </div>
                           </div>
-                          <div className="text-right">
-                            <p className="text-2xl font-bold text-primary">{entry.points}</p>
-                            <p className="text-xs text-muted-foreground">Points cumulés</p>
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>

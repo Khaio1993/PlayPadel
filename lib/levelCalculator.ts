@@ -77,6 +77,43 @@ export function calculateKFactor(
 }
 
 /**
+ * Calcule un facteur de progression basé sur le niveau actuel
+ * Plus le niveau est élevé, plus ce facteur réduit l'impact du delta
+ *
+ * Stratégie :
+ * - En dessous d'un certain seuil (ex: 6), pas de friction → facteur = 1
+ * - Entre ce seuil et LEVEL_MAX, le facteur diminue progressivement
+ * - Un plancher (ex: 0.1) évite de bloquer totalement la progression
+ */
+export function calculateProgressFactor(
+  level: number,
+  levelMin: number = DEFAULT_LEVEL_CONFIG.LEVEL_MIN,
+  levelMax: number = DEFAULT_LEVEL_CONFIG.LEVEL_MAX
+): number {
+  // Seuil à partir duquel on commence à freiner la progression
+  const frictionStart = 5;
+
+  if (level <= frictionStart) {
+    return 1;
+  }
+
+  // Normaliser le niveau entre 0 et 1 sur l'intervalle [frictionStart, levelMax]
+  const clampedLevel = Math.min(Math.max(level, frictionStart), levelMax);
+  const t = (clampedLevel - frictionStart) / (levelMax - frictionStart); // 0 à 1
+
+  // Courbe de friction : plus t est proche de 1, plus on réduit fortement
+  // Ici on descend linéairement de 1 à 0.1 puis on applique un coefficient global
+  const minFactor = 0.1;
+  const factor = 1 - t * (1 - minFactor);
+
+  // Appliquer une friction globale supplémentaire au-dessus du seuil
+  // Exemple : un facteur de 0.5 devient ~0.3
+  const globalFrictionCoeff = 0.6;
+
+  return factor * globalFrictionCoeff;
+}
+
+/**
  * Calcule le gain de fiabilité après un match
  * @param currentReliability - Fiabilité actuelle (0-100)
  * @param baseGain - Gain de base (défaut: 10)
@@ -125,7 +162,13 @@ export function calculateMatchLevelChanges(
   // Calculer les changements pour l'équipe 1
   for (const player of match.team1) {
     const k = calculateKFactor(player.reliability, config.K_MAX);
-    const delta = k * (actualTeam1 - expectedTeam1);
+    const baseDelta = k * (actualTeam1 - expectedTeam1);
+    const progressFactor = calculateProgressFactor(
+      player.level,
+      config.LEVEL_MIN,
+      config.LEVEL_MAX
+    );
+    const delta = baseDelta * progressFactor;
     const newLevel = Math.max(
       config.LEVEL_MIN,
       Math.min(config.LEVEL_MAX, player.level + delta)
@@ -147,7 +190,13 @@ export function calculateMatchLevelChanges(
   // Calculer les changements pour l'équipe 2
   for (const player of match.team2) {
     const k = calculateKFactor(player.reliability, config.K_MAX);
-    const delta = k * (actualTeam2 - expectedTeam2);
+    const baseDelta = k * (actualTeam2 - expectedTeam2);
+    const progressFactor = calculateProgressFactor(
+      player.level,
+      config.LEVEL_MIN,
+      config.LEVEL_MAX
+    );
+    const delta = baseDelta * progressFactor;
     const newLevel = Math.max(
       config.LEVEL_MIN,
       Math.min(config.LEVEL_MAX, player.level + delta)

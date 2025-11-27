@@ -169,9 +169,15 @@ export default function AmericanoMixtePage() {
               // Assigner placeIndex à chaque joueur basé sur sa position initiale
               const playersWithPlaceIndex = players
                 .filter((p) => p.name.trim().length > 0) // Seulement les joueurs avec nom
-                .map((p, index) => ({
-                  ...p,
-                  placeIndex: players.indexOf(p), // Index dans le tableau original (avant filtrage)
+                .map((p) => ({
+                  id: p.id,
+                  name: p.name.trim(),
+                  gender: p.gender,
+                  // Firestore n'accepte pas les valeurs undefined, on normalise en null si absent
+                  userId: p.userId ?? null,
+                  photoURL: p.photoURL ?? null,
+                  // Index dans le tableau original (avant filtrage) pour garder la position
+                  placeIndex: players.indexOf(p),
                 }));
               
               const tournamentData = {
