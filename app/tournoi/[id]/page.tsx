@@ -1009,6 +1009,13 @@ export default function TournamentDetailPage() {
                       <Share2 className="h-5 w-5" />
                       Partager via...
                     </button>
+                    <Link
+                      href={`/join/${tournamentId}`}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 font-medium text-primary-foreground transition-all hover:bg-primary/90 active:scale-95"
+                    >
+                      <ArrowRight className="h-5 w-5" />
+                      Aller au tournoi
+                    </Link>
                     <div className="flex items-center gap-2 rounded-xl border border-border bg-background px-4 py-3">
                       <input
                         type="text"
