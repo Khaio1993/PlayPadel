@@ -10,8 +10,8 @@ import { getMatchesByTournament } from "@/lib/matches";
 import { Tournament, Player, Match } from "@/lib/types";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { createOrUpdateUserProfile, getUserById, getUserFullName, getUsersByIds } from "@/lib/users";
-import { Loader2, MapPin, Clock, Users, FileText, Trophy, Image as ImageIcon, Award, Heart, ArrowLeft, TrendingUp, TrendingDown, ArrowRight } from "lucide-react";
+import { createOrUpdateUserProfile, getUserById, getUserFullName, getUsersByIds, UserProfile } from "@/lib/users";
+import { Loader2, MapPin, Clock, Users, FileText, Trophy, Image as ImageIcon, Award, Heart, ArrowLeft, TrendingUp, TrendingDown, ArrowRight, X } from "lucide-react";
 
 export default function JoinTournamentPage() {
   const params = useParams();
@@ -28,6 +28,9 @@ export default function JoinTournamentPage() {
   const [activeTab, setActiveTab] = useState<"infos" | "joueurs" | "matchs" | "results" | "media">("infos");
   const [userGender, setUserGender] = useState<"M" | "F" | null>(null);
   const [isLikingMedia, setIsLikingMedia] = useState<string | null>(null);
+  const [selectedMedia, setSelectedMedia] = useState<string | null>(null);
+  const [showLikesList, setShowLikesList] = useState(false);
+  const [likesUsers, setLikesUsers] = useState<Map<string, UserProfile>>(new Map());
   const [playerLevelInfo, setPlayerLevelInfo] = useState<
     Record<
       string,
@@ -156,6 +159,54 @@ export default function JoinTournamentPage() {
 
     loadPlayerLevelInfo();
   }, [tournament, tournamentId]);
+
+  // Gérer la fermeture de la modal avec Escape et le scroll
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && selectedMedia) {
+        setSelectedMedia(null);
+        setShowLikesList(false);
+      }
+    };
+
+    if (selectedMedia) {
+      document.body.style.overflow = "hidden";
+      window.addEventListener("keydown", handleEscape);
+    } else {
+      document.body.style.overflow = "";
+      setShowLikesList(false);
+    }
+
+    return () => {
+      document.body.style.overflow = "";
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [selectedMedia]);
+
+  // Charger les profils des utilisateurs qui ont liké
+  useEffect(() => {
+    const loadLikesUsers = async () => {
+      if (!selectedMedia || !showLikesList || !tournament?.media) {
+        setLikesUsers(new Map());
+        return;
+      }
+
+      const media = tournament.media.find((m) => m.id === selectedMedia);
+      if (!media || !media.likes || media.likes.length === 0) {
+        setLikesUsers(new Map());
+        return;
+      }
+
+      try {
+        const userProfiles = await getUsersByIds(media.likes);
+        setLikesUsers(userProfiles);
+      } catch (error) {
+        console.error("Error loading likes users:", error);
+      }
+    };
+
+    loadLikesUsers();
+  }, [selectedMedia, showLikesList, tournament?.media]);
 
   // Vérifier si l'utilisateur est déjà dans le tournoi
   // Vérification stricte : seulement si userId existe ET correspond à l'UID actuel
@@ -1218,7 +1269,8 @@ const hasValidatedScores = Boolean(tournament?.scoresValidated && matches.length
                         return (
                           <div
                             key={media.id}
-                            className="relative overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm"
+                            className="relative overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm cursor-pointer"
+                            onClick={() => setSelectedMedia(media.id)}
                             onDoubleClick={() => handleToggleMediaLike(media.id)}
                           >
                             <div className="relative h-48 w-full">
@@ -1280,6 +1332,189 @@ const hasValidatedScores = Boolean(tournament?.scoresValidated && matches.length
           </div>
         )}
       </main>
+
+      {/* Modal plein écran pour les images */}
+      {selectedMedia && (() => {
+        const media = mediaItems.find((m) => m.id === selectedMedia);
+        if (!media) return null;
+        const likes = media.likes || [];
+        const hasLiked = user ? likes.includes(user.uid) : false;
+
+        return (
+          <>
+            <style jsx global>{`
+              @keyframes modalFadeIn {
+                from {
+                  opacity: 0;
+                }
+                to {
+                  opacity: 1;
+                }
+              }
+              @keyframes modalScaleIn {
+                from {
+                  transform: scale(0.9);
+                  opacity: 0;
+                }
+                to {
+                  transform: scale(1);
+                  opacity: 1;
+                }
+              }
+              @keyframes slideUp {
+                from {
+                  transform: translateY(20px);
+                  opacity: 0;
+                }
+                to {
+                  transform: translateY(0);
+                  opacity: 1;
+                }
+              }
+              @keyframes slideInFromBottom {
+                from {
+                  transform: translateY(10px);
+                  opacity: 0;
+                }
+                to {
+                  transform: translateY(0);
+                  opacity: 1;
+                }
+              }
+              .modal-backdrop {
+                animation: modalFadeIn 0.2s ease-out;
+              }
+              .modal-content {
+                animation: modalScaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+              }
+              .modal-info {
+                animation: slideUp 0.3s ease-out 0.1s both;
+              }
+              .likes-list {
+                animation: slideInFromBottom 0.2s ease-out;
+              }
+            `}</style>
+            <div
+              className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-sm"
+              onClick={() => setSelectedMedia(null)}
+            >
+              <button
+                onClick={() => setSelectedMedia(null)}
+                className="absolute top-4 right-4 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm transition-all hover:bg-black/70 active:scale-95"
+                aria-label="Fermer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+              <div
+                className="modal-content relative h-full w-full max-h-screen"
+                onClick={(e) => e.stopPropagation()}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  handleToggleMediaLike(media.id);
+                }}
+              >
+                <div className="flex h-full w-full items-center justify-center p-4">
+                  <div className="relative h-full w-full max-w-4xl">
+                    <Image
+                      src={media.url}
+                      alt={media.uploadedByName || "Photo du tournoi"}
+                      fill
+                      className="object-contain"
+                      sizes="100vw"
+                      priority
+                    />
+                  </div>
+                </div>
+                {/* Informations en bas */}
+                <div className="modal-info absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/70 to-transparent px-6 py-6">
+                  <div className="mx-auto max-w-4xl">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-base font-semibold text-white">
+                          {media.uploadedByName || "Joueur"}
+                        </p>
+                        <p className="text-sm text-white/70">
+                          {new Date(media.createdAt).toLocaleString("fr-FR", {
+                            day: "2-digit",
+                            month: "long",
+                            year: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </p>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (likes.length > 0) {
+                            setShowLikesList(!showLikesList);
+                          } else {
+                            handleToggleMediaLike(media.id);
+                          }
+                        }}
+                        disabled={isLikingMedia === media.id}
+                        className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold backdrop-blur transition-all ${
+                          hasLiked
+                            ? "bg-red-500/90 text-white"
+                            : "bg-white/20 text-white hover:bg-white/30"
+                        } disabled:cursor-not-allowed active:scale-95`}
+                      >
+                        {isLikingMedia === media.id ? (
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                        ) : (
+                          <Heart
+                            className={`h-5 w-5 ${
+                              hasLiked ? "fill-white text-white" : "text-white"
+                            }`}
+                          />
+                        )}
+                        <span>{likes.length}</span>
+                      </button>
+                    </div>
+                    
+                    {/* Liste des personnes qui ont liké */}
+                    {showLikesList && likes.length > 0 && (
+                      <div className="likes-list mt-4 max-h-48 overflow-y-auto rounded-xl bg-black/40 backdrop-blur-sm p-4">
+                        <p className="mb-3 text-sm font-semibold text-white">
+                          {likes.length} {likes.length === 1 ? "personne a aimé" : "personnes ont aimé"}
+                        </p>
+                        <div className="space-y-2">
+                          {Array.from(likesUsers.entries()).map(([userId, userProfile]) => (
+                            <div
+                              key={userId}
+                              className="flex items-center gap-3 rounded-lg bg-white/10 p-2 backdrop-blur-sm transition-all hover:bg-white/20"
+                            >
+                              {userProfile.photoURL ? (
+                                <Image
+                                  src={userProfile.photoURL}
+                                  alt={getUserFullName(userProfile)}
+                                  width={32}
+                                  height={32}
+                                  className="h-8 w-8 rounded-full object-cover"
+                                />
+                              ) : (
+                                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20">
+                                  <Users className="h-4 w-4 text-white" />
+                                </div>
+                              )}
+                              <p className="text-sm font-medium text-white">
+                                {getUserFullName(userProfile) || userProfile.displayName || "Utilisateur"}
+                                {userId === user?.uid && (
+                                  <span className="ml-2 text-xs text-white/70">(Vous)</span>
+                                )}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }
