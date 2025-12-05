@@ -1,20 +1,16 @@
 // Algorithme de génération des matchs pour Americano Mixte
 import { Player, Match } from "./types";
 
-interface MatchPair {
-  team1: [string, string]; // [playerId1, playerId2]
-  team2: [string, string]; // [playerId3, playerId4]
-}
-
 /**
  * Génère les matchs pour un tournoi Americano Mixte
- * Règles :
- * - Chaque homme joue avec une femme
- * - Les paires mixtes doivent être différentes à chaque match
- * - Chaque round a exactement 2 matchs (un par court)
- * - Tous les joueurs jouent en même temps dans chaque round
+ * Logique :
+ * 1. Séparation Hommes/Femmes.
+ * 2. À chaque round, on décale les femmes pour changer les partenaires (H1 joue avec F1, puis F2, etc.).
+ * 3. Pour les oppositions, on utilise la "Méthode du Cercle" (Berger tables) sur les index des paires.
+ *    Cela garantit que la Paire 1 ne joue pas toujours contre la Paire 2.
  */
 export function generateMatches(players: Player[], courts: { id: string; name: string }[]): Match[] {
+  // 1. Validation et Préparation
   const males = players.filter((p) => p.gender === "M");
   const females = players.filter((p) => p.gender === "F");
 
@@ -22,104 +18,89 @@ export function generateMatches(players: Player[], courts: { id: string; name: s
     throw new Error("Le nombre d'hommes et de femmes doit être égal");
   }
 
-  const numPairs = males.length; // nombre de paires homme/femme possibles
   const totalPlayers = players.length;
-
-  // Chaque match = 4 joueurs (2 paires), donc matchesPerRound = joueurs / 4 = paires / 2
   if (totalPlayers % 4 !== 0) {
-    throw new Error("Le nombre total de joueurs doit être un multiple de 4");
+    throw new Error("Le nombre total de joueurs doit être un multiple de 4 (pour faire des paires complètes)");
   }
 
-  const matchesPerRound = numPairs / 2; // Nombre de matchs par round = joueurs/4
-  const numRounds = numPairs; // On garde la rotation complète sur le nombre de paires
-
-  // Gestion des terrains :
-  // - Aucun terrain ou un seul terrain : tous les matchs utilisent ce même courtId
-  // - Plusieurs terrains : les matchs sont répartis sur les courts (1 match par court tant que possible)
+  const numPairs = males.length; // Ex: 8 joueurs = 4 paires
+  const numRounds = numPairs; // On fait autant de rounds que de paires pour que tout le monde joue avec tout le monde
+  
+  // Gestion des terrains
   const courtIds = courts.length > 0 ? courts.map((c) => c.id) : ["default"];
   const hasSingleOrNoCourt = courtIds.length <= 1;
 
   const matches: Match[] = [];
 
-  // Générer toutes les combinaisons possibles de paires (pour varier les adversaires)
-  const allPairCombinations: [number, number][] = [];
-  for (let i = 0; i < numPairs; i++) {
-    for (let j = i + 1; j < numPairs; j++) {
-      allPairCombinations.push([i, j]);
-    }
-  }
-
-  // Générer les rounds
+  // 2. Génération des Rounds
   for (let round = 1; round <= numRounds; round++) {
-    // Créer une rotation des femmes pour ce round (les hommes restent fixes)
-    const rotatedFemales = rotateArray(females, round - 1);
-
-    // Créer les paires mixtes pour ce round
-    const pairs: [string, string][] = [];
-    for (let i = 0; i < males.length; i++) {
-      pairs.push([males[i].id, rotatedFemales[i].id]);
-    }
-
-    // Sélectionner les matchs pour ce round
-    // On veut exactement `matchesPerRound` matchs
-    const selectedMatches: [number, number][] = [];
-    const usedPairs = new Set<number>();
-
-    // Stratégie simple : diviser les paires en groupes de 2 pour créer les matchs
-    // On utilise une rotation pour varier les matchs entre les rounds
-    const rotationOffset = (round - 1) % numPairs;
     
-    // Créer les matchs en groupant les paires
-    // Exemple 4 paires, 2 courts: (0,1) et (2,3)
-    // Exemple 6 paires, 3 courts: (0,1), (2,3), (4,5)
-    for (let i = 0; i < matchesPerRound && selectedMatches.length < matchesPerRound; i++) {
-      // Calculer les indices des paires pour ce match avec rotation
-      const pair1Index = (rotationOffset + i * 2) % numPairs;
-      const pair2Index = (rotationOffset + i * 2 + 1) % numPairs;
-      
-      // Vérifier qu'on n'utilise pas la même paire deux fois
-      if (pair1Index !== pair2Index && !usedPairs.has(pair1Index) && !usedPairs.has(pair2Index)) {
-        selectedMatches.push([pair1Index, pair2Index]);
-        usedPairs.add(pair1Index);
-        usedPairs.add(pair2Index);
-      }
+    // --- Étape A : Formation des Paires (Rotation des partenaires) ---
+    // Les hommes restent fixes (H1, H2, H3, H4...)
+    // Les femmes tournent à chaque round (F1, F2... puis F2, F3...)
+    // Round 1: (H1-F1), (H2-F2), (H3-F3), (H4-F4)
+    // Round 2: (H1-F2), (H2-F3), (H3-F4), (H4-F1)
+    
+    const currentFemales = rotateArray(females, round - 1);
+    
+    // On construit les paires pour ce round
+    // On stocke l'ID des joueurs pour former l'équipe
+    const pairs: [string, string][] = males.map((male, index) => {
+      return [male.id, currentFemales[index].id];
+    });
+
+    // --- Étape B : Formation des Matchs (Rotation des adversaires) ---
+    // On a une liste de paires [P0, P1, P2, P3...]
+    // On doit les faire jouer l'une contre l'autre en variant les oppositions.
+    // On utilise la méthode du ruban/cercle sur les INDICES des paires.
+    
+    // Indices initiaux : [0, 1, 2, 3]
+    // On garde l'index 0 fixe, et on fait tourner les autres [1, 2, 3]
+    
+    const indices = Array.from({ length: numPairs }, (_, i) => i); // [0, 1, 2, 3...]
+    const fixedIndex = indices[0]; // 0
+    const movingIndices = indices.slice(1); // [1, 2, 3]
+    
+    // Rotation des adversaires : on décale de (round - 1) * 2
+    // On utilise un pas de 2 (au lieu de 1) pour désynchroniser la rotation des matchs
+    // par rapport à la rotation des femmes (qui est de 1).
+    // Comme numPairs est pair, numPairs-1 (taille du cercle mobile) est impair.
+    // Donc 2 est premier avec la taille du cercle, ce qui garantit qu'on parcourt toutes les combinaisons
+    // mais dans un ordre différent qui évite les répétitions consécutives (F1 vs F2 deux fois de suite).
+    const rotationStep = 2;
+    const rotationOffset = (round - 1) * rotationStep;
+    const rotatedMoving = rotateArray(movingIndices, rotationOffset);
+    
+    // On reconstruit le cercle : [0, ...les autres tournés]
+    const roundIndices = [fixedIndex, ...rotatedMoving];
+    
+    // On apparie les extrémités du tableau :
+    // Match 1 : index[0] vs index[last]
+    // Match 2 : index[1] vs index[last-1]
+    // etc.
+    
+    const roundMatches: [number, number][] = [];
+    const half = numPairs / 2;
+    
+    for (let i = 0; i < half; i++) {
+      const team1Index = roundIndices[i];
+      const team2Index = roundIndices[numPairs - 1 - i];
+      roundMatches.push([team1Index, team2Index]);
     }
 
-    // Si on n'a toujours pas assez de matchs (cas où il y a des chevauchements),
-    // compléter avec d'autres combinaisons disponibles
-    if (selectedMatches.length < matchesPerRound) {
-      // Trouver des combinaisons qui n'ont pas encore été utilisées dans ce round
-      for (const [pair1, pair2] of allPairCombinations) {
-        if (selectedMatches.length >= matchesPerRound) break;
-
-        // Vérifier si cette combinaison n'est pas déjà dans selectedMatches
-        const alreadyExists = selectedMatches.some(
-          ([p1, p2]) =>
-            (p1 === pair1 && p2 === pair2) || (p1 === pair2 && p2 === pair1)
-        );
-
-        if (!alreadyExists) {
-          selectedMatches.push([pair1, pair2]);
-        }
-      }
-    }
-
-    // Créer les matchs pour ce round
-    selectedMatches.slice(0, matchesPerRound).forEach(([pairIndex1, pairIndex2], matchIndex) => {
-      // Vérifier que les indices sont valides
-      if (pairIndex1 < pairs.length && pairIndex2 < pairs.length) {
-        const match: Match = {
-          tournamentId: "",
-          round,
-          courtId: hasSingleOrNoCourt
-            ? courtIds[0]
-            : courtIds[matchIndex % courtIds.length],
-          team1: pairs[pairIndex1] as [string, string],
-          team2: pairs[pairIndex2] as [string, string],
-          status: "pending",
-        };
-        matches.push(match);
-      }
+    // --- Étape C : Création des objets Match ---
+    roundMatches.forEach(([pairIndex1, pairIndex2], matchIndex) => {
+      const match: Match = {
+        tournamentId: "", // Sera rempli par le contexte appelant
+        round,
+        courtId: hasSingleOrNoCourt
+          ? courtIds[0]
+          : courtIds[matchIndex % courtIds.length], // Distribution équitable sur les courts
+        team1: pairs[pairIndex1],
+        team2: pairs[pairIndex2],
+        status: "pending",
+      };
+      matches.push(match);
     });
   }
 
@@ -127,14 +108,14 @@ export function generateMatches(players: Player[], courts: { id: string; name: s
 }
 
 /**
- * Fait tourner un tableau
+ * Utilitaire : Fait tourner un tableau de N positions vers la gauche
+ * Ex: [A, B, C], 1 => [B, C, A]
  */
 function rotateArray<T>(array: T[], positions: number): T[] {
-  const rotated = [...array];
-  for (let i = 0; i < positions; i++) {
-    rotated.push(rotated.shift()!);
-  }
-  return rotated;
+  const len = array.length;
+  if (len === 0) return array;
+  const shift = positions % len;
+  return [...array.slice(shift), ...array.slice(0, shift)];
 }
 
 /**
@@ -149,4 +130,3 @@ export function formatTeamName(
   if (!player1 || !player2) return "Équipe inconnue";
   return `${player1.name} & ${player2.name}`;
 }
-
