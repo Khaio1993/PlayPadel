@@ -26,7 +26,8 @@ import {
   Award,
   TrendingUp,
   TrendingDown,
-  ArrowRight
+  ArrowRight,
+  Shuffle
 } from "lucide-react";
 import { ProtectedRoute } from "../../components/ProtectedRoute";
 import { getTournamentById, updateTournament, deleteTournament } from "@/lib/tournaments";
@@ -51,6 +52,8 @@ export default function TournamentDetailPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isValidatingScores, setIsValidatingScores] = useState(false);
+  const [isDeletingMatches, setIsDeletingMatches] = useState(false);
+  const [isShufflingPlayers, setIsShufflingPlayers] = useState(false);
   const [isLoadingPlayerLevels, setIsLoadingPlayerLevels] = useState(false);
   const [playerLevelInfo, setPlayerLevelInfo] = useState<
     Record<
@@ -224,6 +227,43 @@ export default function TournamentDetailPage() {
     }
   };
 
+  const handleShufflePlayers = () => {
+    if (!tournament) return;
+    const maxPlayers = tournament.maxPlayers || tournament.players.length;
+    const filledPlayers = tournament.players.filter((p) => p.name.trim().length > 0);
+    if (filledPlayers.length !== maxPlayers) {
+      showToast("Remplir toutes les places avant de mélanger", "info");
+      return;
+    }
+
+    setIsShufflingPlayers(true);
+    // Mélange aléatoire simple
+    const shuffled = [...filledPlayers].sort(() => Math.random() - 0.5);
+    const reordered = shuffled.map((player, index) => ({
+      ...player,
+      placeIndex: index,
+    }));
+
+    setTournament({ ...tournament, players: reordered });
+    setIsShufflingPlayers(false);
+    showToast("Ordre mélangé. Pensez à sauvegarder.", "success");
+  };
+
+  const handleDeleteAllMatches = async () => {
+    if (!tournament) return;
+    try {
+      setIsDeletingMatches(true);
+      await deleteMatchesByTournament(tournamentId);
+      setMatches([]);
+      showToast("Tous les matchs ont été supprimés", "success");
+    } catch (error) {
+      console.error("Error deleting matches:", error);
+      showToast("Erreur lors de la suppression des matchs", "error");
+    } finally {
+      setIsDeletingMatches(false);
+    }
+  };
+
   // Sauvegarder automatiquement avec debounce
   const saveScore = useCallback(async (matchId: string, score: { team1: number; team2: number }) => {
     const existingTimeout = saveTimeouts.current.get(matchId);
@@ -332,8 +372,21 @@ export default function TournamentDetailPage() {
     });
   }, [matches, playersById, tournament]);
 
+  const scoresLocked = Boolean(tournament?.scoresValidated);
   const hasIncompleteScores = useMemo(
     () => matches.some((match) => !match.score),
+    [matches]
+  );
+
+  const hasMatches = useMemo(() => matches.length > 0, [matches]);
+  const isRemovalLocked = scoresLocked; // verrouillage suppression joueurs/places après validation
+  const hasAnyEnteredScore = useMemo(
+    () =>
+      matches.some(
+        (match) =>
+          match.score &&
+          (((match.score.team1 || 0) > 0) || ((match.score.team2 || 0) > 0))
+      ),
     [matches]
   );
 
@@ -853,7 +906,6 @@ export default function TournamentDetailPage() {
   }
 
   const isOwner = user?.uid === tournament.userId;
-  const scoresLocked = Boolean(tournament.scoresValidated);
 
   if (!isOwner) {
     return (
@@ -1211,15 +1263,37 @@ export default function TournamentDetailPage() {
                   <h2 className="text-xl font-semibold text-foreground">
                     Joueurs ({tournament.players.filter((p) => p.name.trim().length > 0).length}/{tournament.maxPlayers || tournament.players.length})
                   </h2>
-                  {(tournament.maxPlayers || tournament.players.length) < 12 && (
-                    <button
-                      onClick={handleAddPlace}
-                      className="flex items-center gap-2 rounded-lg bg-primary/10 px-3 py-2 text-sm font-medium text-primary transition-all hover:bg-primary/20"
-                    >
-                      <Plus className="h-4 w-4" />
-                      Ajouter une place
-                    </button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {(tournament.maxPlayers || tournament.players.length) < 12 && (
+                      <button
+                        onClick={handleAddPlace}
+                        className="flex items-center gap-2 rounded-lg bg-primary/10 px-3 py-2 text-sm font-medium text-primary transition-all hover:bg-primary/20"
+                      >
+                        <Plus className="h-4 w-4" />
+                        Ajouter une place
+                      </button>
+                    )}
+                    {(tournament.maxPlayers || tournament.players.length) ===
+                      tournament.players.filter((p) => p.name.trim().length > 0).length && (
+                      <button
+                        onClick={handleShufflePlayers}
+                        disabled={isShufflingPlayers || hasMatches || scoresLocked}
+                        className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground transition-all hover:bg-muted disabled:opacity-50"
+                      >
+                        {isShufflingPlayers ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Mélange...
+                          </>
+                        ) : (
+                          <>
+                            <Shuffle className="h-4 w-4" />
+                            Mélanger
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="space-y-3 mb-4">
@@ -1228,7 +1302,7 @@ export default function TournamentDetailPage() {
                     const isOccupied = player !== null;
                     
                     const maxPlaces = tournament.maxPlayers || tournament.players.length;
-                    const removeDisabled = !isOccupied && maxPlaces <= 4;
+                    const removeDisabled = (!isOccupied && maxPlaces <= 4) || isRemovalLocked;
 
                     return (
                       <div
@@ -1258,8 +1332,15 @@ export default function TournamentDetailPage() {
                                   photoURL: selectedPlayer.photoURL,
                                 })
                               }
-                              onRemove={() =>
-                                handleUpdatePlayer(player.id, { name: "", userId: undefined, photoURL: undefined })
+                              onRemove={
+                                isRemovalLocked
+                                  ? undefined
+                                  : () =>
+                                      handleUpdatePlayer(player.id, {
+                                        name: "",
+                                        userId: undefined,
+                                        photoURL: undefined,
+                                      })
                               }
                               gender={player.gender}
                               placeholder={`Joueur ${place.index + 1}`}
@@ -1424,15 +1505,26 @@ export default function TournamentDetailPage() {
                   <div className="space-y-6">
                     <div className="flex items-center justify-between">
                       <h3 className="text-lg font-semibold text-foreground">Rounds</h3>
-                      {scoresLocked ? (
-                        <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300">
-                          Scores validés
-                        </span>
-                      ) : (
-                        <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
-                          Scores éditables
-                        </span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {scoresLocked ? (
+                          <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300">
+                            Scores validés
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
+                            Scores éditables
+                          </span>
+                        )}
+                        {!hasAnyEnteredScore && (
+                          <button
+                            onClick={handleDeleteAllMatches}
+                            disabled={isDeletingMatches}
+                            className="rounded-full border border-destructive/30 px-3 py-1 text-xs font-semibold text-destructive transition hover:bg-destructive/10 disabled:opacity-50"
+                          >
+                            {isDeletingMatches ? "Suppression..." : "Supprimer les matchs"}
+                          </button>
+                        )}
+                      </div>
                     </div>
                     {Array.from({ length: rounds }, (_, i) => i + 1).map((round) => {
                       const roundMatches = getMatchesByRound(round);

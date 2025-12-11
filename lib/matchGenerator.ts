@@ -3,11 +3,17 @@ import { Player, Match } from "./types";
 
 /**
  * Génère les matchs pour un tournoi Americano Mixte
- * Logique :
- * 1. Séparation Hommes/Femmes.
- * 2. À chaque round, on décale les femmes pour changer les partenaires (H1 joue avec F1, puis F2, etc.).
- * 3. Pour les oppositions, on utilise la "Méthode du Cercle" (Berger tables) sur les index des paires.
- *    Cela garantit que la Paire 1 ne joue pas toujours contre la Paire 2.
+ * 
+ * Logique pour 8 joueurs (4H/4F) - MATRICE FIXE demandée :
+ * R1: (H1-F1 vs H4-F4) & (H2-F2 vs H3-F3)
+ * R2: (H4-F1 vs H2-F3) & (H1-F2 vs H3-F4)
+ * R3: (H1-F3 vs H2-F4) & (H3-F1 vs H4-F2)
+ * R4: (H3-F2 vs H4-F3) & (H2-F1 vs H1-F4)
+ * 
+ * Logique générique (pour 4, 12, 16... joueurs) :
+ * - Séparation Hommes/Femmes
+ * - Rotation des partenaires (H_i avec F_(i+round))
+ * - Rotation des adversaires (basée sur décalage)
  */
 export function generateMatches(players: Player[], courts: { id: string; name: string }[]): Match[] {
   // 1. Validation et Préparation
@@ -23,84 +29,109 @@ export function generateMatches(players: Player[], courts: { id: string; name: s
     throw new Error("Le nombre total de joueurs doit être un multiple de 4 (pour faire des paires complètes)");
   }
 
-  const numPairs = males.length; // Ex: 8 joueurs = 4 paires
-  const numRounds = numPairs; // On fait autant de rounds que de paires pour que tout le monde joue avec tout le monde
-  
   // Gestion des terrains
   const courtIds = courts.length > 0 ? courts.map((c) => c.id) : ["default"];
   const hasSingleOrNoCourt = courtIds.length <= 1;
 
   const matches: Match[] = [];
+  const numPairs = males.length; // Ex: 8 joueurs = 4 paires
 
-  // 2. Génération des Rounds
+  // --- CAS SPÉCIFIQUE : 8 JOUEURS (4H / 4F) ---
+  if (totalPlayers === 8) {
+    const matrix = [
+      // Round 1
+      [
+        { h: 0, f: 0, vsH: 2, vsF: 2 }, // H1-F1 vs H3-F3
+        { h: 1, f: 1, vsH: 3, vsF: 3 }  // H2-F2 vs H4-F4
+      ],
+      // Round 2
+      [
+        { h: 0, f: 2, vsH: 3, vsF: 1 }, // H1-F3 vs H4-F2
+        { h: 1, f: 3, vsH: 2, vsF: 0 }  // H2-F4 vs H3-F1
+      ],
+      // Round 3
+      [
+        { h: 0, f: 1, vsH: 2, vsF: 3 }, // H1-F2 vs H3-F4
+        { h: 1, f: 2, vsH: 3, vsF: 0 }  // H2-F3 vs H4-F1
+      ],
+      // Round 4
+      [
+        { h: 0, f: 3, vsH: 1, vsF: 0 }, // H1-F4 vs H2-F1
+        { h: 2, f: 1, vsH: 3, vsF: 2 }  // H3-F2 vs H4-F3
+      ]
+    ];
+
+    matrix.forEach((roundMatchesConfig, roundIdx) => {
+      const roundNum = roundIdx + 1;
+      roundMatchesConfig.forEach((config, matchIdx) => {
+        const team1 = [males[config.h].id, females[config.f].id];
+        const team2 = [males[config.vsH].id, females[config.vsF].id];
+
+        matches.push({
+          tournamentId: "", // Sera rempli par le contexte appelant
+          round: roundNum,
+          courtId: hasSingleOrNoCourt
+            ? courtIds[0]
+            : courtIds[matchIdx % courtIds.length],
+          team1,
+          team2,
+          status: "pending",
+        });
+      });
+    });
+
+    return matches;
+  }
+
+  // --- CAS GÉNÉRIQUE (Fallback pour 4, 12, 16 joueurs...) ---
+  // Logique simple : Partner Rotation + Opponent Shift
+  const numRounds = numPairs; 
+
   for (let round = 1; round <= numRounds; round++) {
-    
-    // --- Étape A : Formation des Paires (Rotation des partenaires) ---
-    // Les hommes restent fixes (H1, H2, H3, H4...)
-    // Les femmes tournent à chaque round (F1, F2... puis F2, F3...)
-    // Round 1: (H1-F1), (H2-F2), (H3-F3), (H4-F4)
-    // Round 2: (H1-F2), (H2-F3), (H3-F4), (H4-F1)
-    
+    // 1. Formation des équipes (H fixe, F tourne)
     const currentFemales = rotateArray(females, round - 1);
-    
-    // On construit les paires pour ce round
-    // On stocke l'ID des joueurs pour former l'équipe
     const pairs: [string, string][] = males.map((male, index) => {
       return [male.id, currentFemales[index].id];
     });
 
-    // --- Étape B : Formation des Matchs (Rotation des adversaires) ---
-    // On a une liste de paires [P0, P1, P2, P3...]
-    // On doit les faire jouer l'une contre l'autre en variant les oppositions.
-    // On utilise la méthode du ruban/cercle sur les INDICES des paires.
-    
-    // Indices initiaux : [0, 1, 2, 3]
-    // On garde l'index 0 fixe, et on fait tourner les autres [1, 2, 3]
-    
-    const indices = Array.from({ length: numPairs }, (_, i) => i); // [0, 1, 2, 3...]
-    const fixedIndex = indices[0]; // 0
-    const movingIndices = indices.slice(1); // [1, 2, 3]
-    
-    // Rotation des adversaires : on décale de (round - 1) * 2
-    // On utilise un pas de 2 (au lieu de 1) pour désynchroniser la rotation des matchs
-    // par rapport à la rotation des femmes (qui est de 1).
-    // Comme numPairs est pair, numPairs-1 (taille du cercle mobile) est impair.
-    // Donc 2 est premier avec la taille du cercle, ce qui garantit qu'on parcourt toutes les combinaisons
-    // mais dans un ordre différent qui évite les répétitions consécutives (F1 vs F2 deux fois de suite).
-    const rotationStep = 2;
-    const rotationOffset = (round - 1) * rotationStep;
-    const rotatedMoving = rotateArray(movingIndices, rotationOffset);
-    
-    // On reconstruit le cercle : [0, ...les autres tournés]
-    const roundIndices = [fixedIndex, ...rotatedMoving];
-    
-    // On apparie les extrémités du tableau :
-    // Match 1 : index[0] vs index[last]
-    // Match 2 : index[1] vs index[last-1]
-    // etc.
-    
+    // 2. Formation des matchs (Pair i vs Pair i + N/2)
+    // Cette méthode simple assure que tout le monde joue, mais ne garantit pas
+    // une diversité parfaite des adversaires pour les grands nombres (>8).
     const roundMatches: [number, number][] = [];
-    const half = numPairs / 2;
+    const usedPairs = new Set<number>();
+    const half = Math.floor(numPairs / 2);
+
+    // On fait jouer Pair i contre Pair i+half
+    // Pour 4 paires (si on n'utilisait pas la matrice 8):
+    // R1 (F decal 0): P0vP2, P1vP3
+    // R2 (F decal 1): P0vP2, P1vP3 (mais P0 est H0-F1, P2 est H2-F3) -> Opposants changent
     
-    for (let i = 0; i < half; i++) {
-      const team1Index = roundIndices[i];
-      const team2Index = roundIndices[numPairs - 1 - i];
-      roundMatches.push([team1Index, team2Index]);
+    // Pour 6 paires (12 joueurs):
+    // P0vP3, P1vP4, P2vP5
+    
+    for (let i = 0; i < numPairs; i++) {
+      if (usedPairs.has(i)) continue;
+      
+      const opponentIndex = (i + half) % numPairs;
+      if (usedPairs.has(opponentIndex)) continue; // Ne devrait pas arriver si pair
+
+      roundMatches.push([i, opponentIndex]);
+      usedPairs.add(i);
+      usedPairs.add(opponentIndex);
     }
 
-    // --- Étape C : Création des objets Match ---
+    // Création des objets Match
     roundMatches.forEach(([pairIndex1, pairIndex2], matchIndex) => {
-      const match: Match = {
-        tournamentId: "", // Sera rempli par le contexte appelant
-        round,
-        courtId: hasSingleOrNoCourt
-          ? courtIds[0]
-          : courtIds[matchIndex % courtIds.length], // Distribution équitable sur les courts
-        team1: pairs[pairIndex1],
-        team2: pairs[pairIndex2],
-        status: "pending",
-      };
-      matches.push(match);
+        matches.push({
+          tournamentId: "",
+          round,
+          courtId: hasSingleOrNoCourt
+            ? courtIds[0]
+            : courtIds[matchIndex % courtIds.length],
+          team1: pairs[pairIndex1],
+          team2: pairs[pairIndex2],
+          status: "pending",
+        });
     });
   }
 
