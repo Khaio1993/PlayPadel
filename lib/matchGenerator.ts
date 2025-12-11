@@ -64,8 +64,8 @@ export function generateMatches(players: Player[], courts: { id: string; name: s
     matrix.forEach((roundMatchesConfig, roundIdx) => {
       const roundNum = roundIdx + 1;
       roundMatchesConfig.forEach((config, matchIdx) => {
-        const team1 = [males[config.h].id, females[config.f].id];
-        const team2 = [males[config.vsH].id, females[config.vsF].id];
+        const team1: [string, string] = [males[config.h].id, females[config.f].id];
+        const team2: [string, string] = [males[config.vsH].id, females[config.vsF].id];
 
         matches.push({
           tournamentId: "", // Sera rempli par le contexte appelant
